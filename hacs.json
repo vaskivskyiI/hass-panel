@@ -1,6 +1,6 @@
 {
   "name": "Studio Panel",
-  "content_in_root": true,
+  "content_in_root": false,
   "render_readme": true,
   "domains": ["studio_panel"],
   "iot_class": "local_polling"
