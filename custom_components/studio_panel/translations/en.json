@@ -1,0 +1,14 @@
+{
+  "title": "Studio Panel",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Studio Panel",
+        "description": "Enable the Studio Panel settings API."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Studio Panel is already configured."
+    }
+  }
+}

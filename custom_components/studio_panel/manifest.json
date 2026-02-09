@@ -5,6 +5,7 @@
   "documentation": "https://example.local/studio-panel",
   "issue_tracker": "https://example.local/studio-panel/issues",
   "requirements": [],
+  "config_flow": true,
   "dependencies": ["http"],
   "codeowners": [],
   "iot_class": "local_polling"
