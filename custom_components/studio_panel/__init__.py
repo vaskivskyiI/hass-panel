@@ -9,12 +9,6 @@ from .storage import SettingsStore
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    if DOMAIN not in config:
-        return True
-
-    store = SettingsStore.create(hass)
-    hass.data.setdefault(DOMAIN, {})["store"] = store
-    async_register_views(hass, store)
     return True
 
 
