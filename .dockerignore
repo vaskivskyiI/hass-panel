@@ -1,0 +1,11 @@
+.git
+.github
+.vscode
+node_modules
+dist
+dist-ssr
+__pycache__
+**/__pycache__
+*.py[cod]
+*.log
+.env.local

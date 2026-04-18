@@ -1,1 +1,41 @@
-{}
+set_password:
+  name: Set Settings Password
+  description: Set or clear the Studio Panel settings password stored in Home Assistant.
+  fields:
+    password:
+      name: Password
+      description: New password for Studio Panel settings. Leave empty only when clearing the password.
+      example: tablet-admin
+      required: false
+      selector:
+        text:
+          type: password
+    clear_password:
+      name: Clear password
+      description: Clear the stored password so the panel prompts for a new one on next settings access.
+      required: false
+      default: false
+      selector:
+        boolean: {}
+update_settings:
+  name: Update Panel Settings
+  description: Replace or merge Studio Panel settings stored in Home Assistant using a JSON object.
+  fields:
+    settings_json:
+      name: Settings JSON
+      description: JSON object containing panel settings keys such as enabledEntities, categoryMap, customCategories, sceneButtons, or headerEntities.
+      required: true
+      example: '{"customCategories":["Lighting","Climate"]}'
+      selector:
+        text:
+          multiline: true
+    merge:
+      name: Merge into existing settings
+      description: Merge the JSON object into the current saved settings instead of replacing the full settings document.
+      required: false
+      default: true
+      selector:
+        boolean: {}
+reset_settings:
+  name: Reset Panel Settings
+  description: Clear all Studio Panel settings stored in Home Assistant.

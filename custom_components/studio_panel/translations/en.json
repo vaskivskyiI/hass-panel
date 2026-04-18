@@ -10,5 +10,44 @@
     "abort": {
       "single_instance_allowed": "Studio Panel is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage settings password",
+        "menu_options": {
+          "set_password": "Set new password",
+          "clear_password": "Clear password",
+          "edit_settings": "Edit panel settings",
+          "reset_settings": "Reset all panel settings"
+        }
+      },
+      "set_password": {
+        "title": "Set settings password",
+        "description": "Replace the Studio Panel settings password used to unlock the panel settings screen.",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "clear_password": {
+        "title": "Clear settings password",
+        "description": "Remove the stored password. The next time Settings is opened in the panel, it will ask for a new password."
+      },
+      "edit_settings": {
+        "title": "Edit panel settings",
+        "description": "Update the saved Studio Panel configuration as raw JSON stored in Home Assistant.",
+        "data": {
+          "settings_json": "Settings JSON"
+        }
+      },
+      "reset_settings": {
+        "title": "Reset all panel settings",
+        "description": "Delete all saved panel settings from Home Assistant. The panel will rebuild its defaults from current entities on next load."
+      }
+    },
+    "error": {
+      "password_required": "Enter a password.",
+      "invalid_json": "Enter a valid JSON object."
+    }
   }
 }
