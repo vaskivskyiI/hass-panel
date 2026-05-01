@@ -6,6 +6,7 @@ import { getOrCreateDeviceId, resolveProfileKey } from './lib/deviceProfile'
 import {
   formatLabel,
   getDefaultCategory,
+  getDomain,
   getFriendlyName,
   getMeasurementUnit,
 } from './lib/entityModel'
@@ -21,6 +22,7 @@ import type { PanelActionTile, PanelSettings } from './types/settings'
 import type { RuntimeConfig } from './runtimeConfig'
 
 const REFRESH_INTERVAL_MS = 3000
+const MANAGE_PAGE_SIZE = 80
 
 const parseRoute = (): RouteState => {
   if (typeof window === 'undefined') return { kind: 'dashboard' }
@@ -255,6 +257,8 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
   const [manageStatus, setManageStatus] = useState('')
   const [lastEntitySyncCount, setLastEntitySyncCount] = useState(0)
   const [lastEntitySyncError, setLastEntitySyncError] = useState('')
+  const [manageSearch, setManageSearch] = useState('')
+  const [manageVisibleCount, setManageVisibleCount] = useState(MANAGE_PAGE_SIZE)
 
   const connectionReady = Boolean(token && haUrl)
 
@@ -463,6 +467,18 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     ? [...settings.customCategories]
     : Array.from(new Set(visibleEntities.map((entity) => categoryMap[entity.entity_id] || getDefaultCategory(entity))))
 
+  const manageEntities = orderedEntities.filter((entity) => {
+    const query = manageSearch.trim().toLowerCase()
+    if (!query) return true
+    const display = (draftNameOverrides[entity.entity_id] ?? getFriendlyName(entity)).toLowerCase()
+    return (
+      entity.entity_id.toLowerCase().includes(query) ||
+      display.includes(query) ||
+      getDomain(entity.entity_id).toLowerCase().includes(query)
+    )
+  })
+  const visibleManageEntities = manageEntities.slice(0, manageVisibleCount)
+
   const featuredEntities = (settings.globalSettings?.featuredEntities?.length ?? 0) > 0
     ? visibleEntities.filter((entity) => settings.globalSettings?.featuredEntities?.includes(entity.entity_id))
     : visibleEntities.slice(0, 4)
@@ -607,6 +623,8 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     setDraftCustomCategories(settings.customCategories)
     setDraftNewCategory('')
     setManageStatus('')
+    setManageSearch('')
+    setManageVisibleCount(MANAGE_PAGE_SIZE)
   }
 
   const openManage = () => {
@@ -779,11 +797,25 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
 
           <div className="manage-grid">
             <section className="manage-list">
-              <h3>All entities</h3>
-              {orderedEntities.length === 0 ? (
+              <div className="manage-list__header">
+                <h3>All entities</h3>
+                <input
+                  className="search-input"
+                  value={manageSearch}
+                  onChange={(event) => {
+                    setManageSearch(event.target.value)
+                    setManageVisibleCount(MANAGE_PAGE_SIZE)
+                  }}
+                  placeholder="Filter by name, id, or domain"
+                />
+                <p className="muted">
+                  Showing {visibleManageEntities.length} of {manageEntities.length}
+                </p>
+              </div>
+              {manageEntities.length === 0 ? (
                 <p className="empty-state">No entities synced yet. Press Refresh to pull latest from Home Assistant.</p>
               ) : null}
-              {orderedEntities.map((entity) => {
+              {visibleManageEntities.map((entity) => {
                 const checked = draftEnabledEntities.includes(entity.entity_id)
                 const categoryValue = draftCategoryMap[entity.entity_id] || getDefaultCategory(entity)
                 return (
@@ -843,6 +875,14 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
                   </div>
                 )
               })}
+              {manageEntities.length > visibleManageEntities.length ? (
+                <button
+                  className="secondary-button"
+                  onClick={() => setManageVisibleCount((previous) => previous + MANAGE_PAGE_SIZE)}
+                >
+                  Load more ({manageEntities.length - visibleManageEntities.length} remaining)
+                </button>
+              ) : null}
               <datalist id="manage-categories-list">
                 {draftCustomCategories.map((category) => (
                   <option key={category} value={category} />

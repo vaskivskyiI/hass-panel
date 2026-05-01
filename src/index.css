@@ -482,6 +482,17 @@ button {
   margin: 0 0 10px;
 }
 
+.manage-list__header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.manage-list__header .search-input {
+  max-width: 480px;
+}
+
 .manage-row {
   display: grid;
   grid-template-columns: auto 1fr;
