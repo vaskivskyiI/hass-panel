@@ -66,6 +66,31 @@ const normalizeStringMap = (value: unknown) =>
       )
     : {}
 
+const normalizeBooleanMap = (value: unknown): Record<string, boolean> =>
+  typeof value === 'object' && value !== null
+    ? Object.fromEntries(
+        Object.entries(value).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'),
+      )
+    : {}
+
+const normalizeCardWidths = (value: unknown): Record<string, 'single' | 'double'> =>
+  typeof value === 'object' && value !== null
+    ? Object.fromEntries(
+        Object.entries(value).filter(
+          (entry): entry is [string, 'single' | 'double'] =>
+            entry[1] === 'single' || entry[1] === 'double',
+        ),
+      )
+    : {}
+
+const hashPin = async (value: string): Promise<string> => {
+  const data = new TextEncoder().encode(value)
+  const digest = await window.crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 const normalizePanelSettings = (value: unknown): PanelSettings => {
   const defaults = createDefaultPanelSettings()
 
@@ -92,6 +117,9 @@ const normalizePanelSettings = (value: unknown): PanelSettings => {
     enabledEntities: normalizeStringArray(parsed.enabledEntities),
     nameOverrides: normalizeStringMap(parsed.nameOverrides),
     categoryMap: normalizeStringMap(parsed.categoryMap),
+    categoryPinHashes: normalizeStringMap(parsed.categoryPinHashes),
+    showIcons: normalizeBooleanMap(parsed.showIcons),
+    cardWidths: normalizeCardWidths(parsed.cardWidths),
     entityOrder: normalizeStringArray(parsed.entityOrder),
     customCategories: normalizeStringArray(parsed.customCategories),
     headerEntities: {
@@ -196,6 +224,9 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
   const [storageError, setStorageError] = useState('')
   const [lastUpdated, setLastUpdated] = useState('')
   const [search, setSearch] = useState('')
+  const [pendingCategoryPin, setPendingCategoryPin] = useState('')
+  const [pinInput, setPinInput] = useState('')
+  const [pinError, setPinError] = useState('')
 
   const connectionReady = Boolean(token && haUrl)
 
@@ -469,6 +500,36 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     window.location.assign(tile.target)
   }
 
+  const openCategory = (category: string) => {
+    const hash = settings.categoryPinHashes?.[category] ?? ''
+    if (hash) {
+      setPendingCategoryPin(category)
+      setPinInput('')
+      setPinError('')
+      return
+    }
+    const nextRoute: RouteState = { kind: 'category', category }
+    pushRoute(nextRoute)
+    setRoute(nextRoute)
+  }
+
+  const submitPin = async () => {
+    if (!pendingCategoryPin) return
+    const hash = await hashPin(pinInput)
+    if (hash === (settings.categoryPinHashes?.[pendingCategoryPin] ?? '')) {
+      const category = pendingCategoryPin
+      setPendingCategoryPin('')
+      setPinInput('')
+      setPinError('')
+      const nextRoute: RouteState = { kind: 'category', category }
+      pushRoute(nextRoute)
+      setRoute(nextRoute)
+    } else {
+      setPinError('Incorrect PIN.')
+      setPinInput('')
+    }
+  }
+
   const handleDoorAction = async () => {
     const entityId = settings.headerEntities.doorActionEntityId || 'button.studio_intercom_open_door'
     if (!entityId) return
@@ -565,11 +626,7 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
             <button
               key={category}
               className={route.kind === 'category' && route.category === category ? 'chip chip--active' : 'chip'}
-              onClick={() => {
-                const nextRoute: RouteState = { kind: 'category', category }
-                pushRoute(nextRoute)
-                setRoute(nextRoute)
-              }}
+              onClick={() => openCategory(category)}
             >
               {category}
             </button>
@@ -626,6 +683,8 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
                       entity={entity}
                       displayName={nameOverrides[entity.entity_id] ?? getFriendlyName(entity)}
                       highlighted
+                      showIcon={settings.showIcons[entity.entity_id] !== false}
+                      isWide={settings.cardWidths[entity.entity_id] === 'double'}
                       onExecute={handleExecute}
                     />
                   ))}
@@ -671,6 +730,8 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
                             key={entity.entity_id}
                             entity={entity}
                             displayName={nameOverrides[entity.entity_id] ?? getFriendlyName(entity)}
+                            showIcon={settings.showIcons[entity.entity_id] !== false}
+                            isWide={settings.cardWidths[entity.entity_id] === 'double'}
                             onExecute={handleExecute}
                           />
                         ))
@@ -720,11 +781,7 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
                   <button
                     key={category}
                     className="list-button"
-                    onClick={() => {
-                      const nextRoute: RouteState = { kind: 'category', category }
-                      pushRoute(nextRoute)
-                      setRoute(nextRoute)
-                    }}
+                    onClick={() => openCategory(category)}
                   >
                     <span>{category}</span>
                     <strong>
@@ -754,6 +811,36 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
           </aside>
         </main>
       )}
+
+      {pendingCategoryPin ? (
+        <div className="pin-overlay">
+          <div className="pin-dialog panel">
+            <p className="eyebrow">PIN required</p>
+            <h2>{pendingCategoryPin}</h2>
+            <input
+              type="password"
+              inputMode="numeric"
+              placeholder="Enter PIN"
+              autoFocus
+              value={pinInput}
+              className="search-input"
+              onChange={(e) => setPinInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitPin()
+              }}
+            />
+            {pinError ? <p className="status status--error">{pinError}</p> : null}
+            <div className="pin-dialog__actions">
+              <button className="primary-button" onClick={() => void submitPin()}>
+                Unlock
+              </button>
+              <button className="secondary-button" onClick={() => setPendingCategoryPin('')}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
