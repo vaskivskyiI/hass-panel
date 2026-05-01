@@ -20,7 +20,7 @@ class StudioPanelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
-        return StudioPanelOptionsFlow(config_entry)
+        return StudioPanelOptionsFlow()
 
     async def async_step_user(self, user_input=None):
         if self._async_current_entries():
@@ -33,9 +33,6 @@ class StudioPanelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class StudioPanelOptionsFlow(config_entries.OptionsFlow):
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
-
     @property
     def _store(self) -> SettingsStore:
         domain_data = self.hass.data.setdefault(DOMAIN, {})
