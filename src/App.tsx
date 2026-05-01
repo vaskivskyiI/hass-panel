@@ -253,6 +253,8 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
   const [draftNewCategory, setDraftNewCategory] = useState('')
   const [manageSaving, setManageSaving] = useState(false)
   const [manageStatus, setManageStatus] = useState('')
+  const [lastEntitySyncCount, setLastEntitySyncCount] = useState(0)
+  const [lastEntitySyncError, setLastEntitySyncError] = useState('')
 
   const connectionReady = Boolean(token && haUrl)
 
@@ -300,13 +302,28 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
 
     try {
       const data = await fetchPanelEntities(haUrl, token)
+      const normalized = Array.isArray(data)
+        ? data.filter(
+            (entry): entry is HaEntity =>
+              !!entry &&
+              typeof entry === 'object' &&
+              typeof (entry as HaEntity).entity_id === 'string' &&
+              typeof (entry as HaEntity).state === 'string' &&
+              typeof (entry as HaEntity).attributes === 'object' &&
+              (entry as HaEntity).attributes !== null,
+          )
+        : []
+
       startTransition(() => {
-        setEntities(data)
+        setEntities(normalized)
         setLastUpdated(new Date().toLocaleTimeString())
       })
+      setLastEntitySyncCount(normalized.length)
+      setLastEntitySyncError('')
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Unable to fetch entities.'
       setError(message)
+      setLastEntitySyncError(message)
     } finally {
       if (!silent) setLoading(false)
     }
@@ -599,6 +616,7 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     if (!settings.passwordHash) {
       setManageUnlocked(true)
       syncManageDraftFromSettings()
+      void refreshEntities(false)
       return
     }
     setManageUnlocked(false)
@@ -617,6 +635,7 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
       setManagePinError('')
       setManagePinInput('')
       syncManageDraftFromSettings()
+      void refreshEntities(false)
       return
     }
     setManagePinError('Incorrect password.')
@@ -702,6 +721,11 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
         <p className="eyebrow">Protected Setup</p>
         <h2>Panel manager</h2>
         <p className="muted">Configure panel entities visually and save directly.</p>
+        <p className="muted">
+          Synced entities: {lastEntitySyncCount}
+          {lastUpdated ? ` · updated ${lastUpdated}` : ''}
+          {lastEntitySyncError ? ` · last error: ${lastEntitySyncError}` : ''}
+        </p>
       </div>
 
       {!manageUnlocked && settings.passwordHash ? (
