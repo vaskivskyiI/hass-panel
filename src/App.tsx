@@ -12,8 +12,8 @@ import {
 import {
   callService,
   fetchEntityState,
+  fetchPanelEntities,
   fetchPanelSettings,
-  fetchStates,
   savePanelSettings,
 } from './services/haApi'
 import type { EntityCommand, HaEntity, RouteState } from './types/ha'
@@ -299,7 +299,7 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     }
 
     try {
-      const data = await fetchStates(haUrl, token)
+      const data = await fetchPanelEntities(haUrl, token)
       startTransition(() => {
         setEntities(data)
         setLastUpdated(new Date().toLocaleTimeString())
@@ -756,6 +756,9 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
           <div className="manage-grid">
             <section className="manage-list">
               <h3>All entities</h3>
+              {orderedEntities.length === 0 ? (
+                <p className="empty-state">No entities synced yet. Press Refresh to pull latest from Home Assistant.</p>
+              ) : null}
               {orderedEntities.map((entity) => {
                 const checked = draftEnabledEntities.includes(entity.entity_id)
                 const categoryValue = draftCategoryMap[entity.entity_id] || getDefaultCategory(entity)
@@ -852,6 +855,9 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
               disabled={manageSaving}
             >
               {manageSaving ? 'Saving...' : 'Save Settings'}
+            </button>
+            <button className="secondary-button" onClick={() => void refreshEntities(false)}>
+              Refresh from HA
             </button>
             <button className="secondary-button" onClick={syncManageDraftFromSettings}>
               Reset Draft

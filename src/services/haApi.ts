@@ -55,6 +55,9 @@ export const fetchStates = (haUrl: string, token: string) =>
 export const fetchEntityState = (haUrl: string, token: string, entityId: string) =>
   apiFetch<HaEntity>(haUrl, token, `/states/${encodeURIComponent(entityId)}`)
 
+export const fetchPanelEntities = (haUrl: string, token: string) =>
+  apiFetch<HaEntity[]>(haUrl, token, '/studio_panel/entities')
+
 export const callService = (
   haUrl: string,
   token: string,

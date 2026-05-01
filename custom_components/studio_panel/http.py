@@ -27,6 +27,27 @@ class StudioPanelSettingsView(HomeAssistantView):
         return self.json({"status": "ok"})
 
 
+class StudioPanelEntitiesView(HomeAssistantView):
+    url = "/api/studio_panel/entities"
+    name = "api:studio_panel:entities"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+
+    async def get(self, request):
+        entities = [
+            {
+                "entity_id": state.entity_id,
+                "state": state.state,
+                "attributes": dict(state.attributes),
+            }
+            for state in self.hass.states.async_all()
+        ]
+        return self.json(entities)
+
+
 @callback
 def async_register_views(hass: HomeAssistant, store: SettingsStore) -> None:
     hass.http.register_view(StudioPanelSettingsView(store))
+    hass.http.register_view(StudioPanelEntitiesView(hass))
