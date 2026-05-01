@@ -17,4 +17,4 @@ export type RouteState =
   | { kind: 'dashboard' }
   | { kind: 'category'; category: string }
   | { kind: 'links' }
-  | { kind: 'connection' }
+  | { kind: 'manage' }

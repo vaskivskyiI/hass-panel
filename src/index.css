@@ -82,11 +82,12 @@ button {
 }
 
 .hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 28px;
-  margin-bottom: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
 }
 
 .hero h1,
@@ -97,7 +98,11 @@ button {
 }
 
 .hero h1 {
-  font-size: clamp(2.2rem, 4vw, 4rem);
+  font-size: clamp(1.15rem, 2vw, 1.7rem);
+}
+
+.hero__main {
+  min-width: 0;
 }
 
 .hero__subtitle,
@@ -106,24 +111,24 @@ button {
 }
 
 .hero__meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(100px, 1fr));
-  gap: 12px;
-  min-width: min(360px, 100%);
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
 }
 
 .hero__meta div {
-  padding: 16px;
-  border-radius: 18px;
+  min-width: 78px;
+  padding: 8px 10px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
 }
 
 .hero__meta span,
-.eyebrow,
-.entity-card__domain {
+.eyebrow {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.18em;
@@ -131,7 +136,12 @@ button {
 }
 
 .hero__meta strong {
-  font-size: 1.25rem;
+  font-size: 0.95rem;
+}
+
+.hero__action {
+  border-radius: 12px;
+  white-space: nowrap;
 }
 
 .topbar {
@@ -146,7 +156,6 @@ button {
 .topbar__right,
 .category-list,
 .facts,
-.content-side,
 .content-main {
   display: flex;
   flex-direction: column;
@@ -205,7 +214,7 @@ button {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -423,6 +432,78 @@ button {
   font-size: 0.74rem;
 }
 
+.manage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.manage-lock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 420px;
+}
+
+.manage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.manage-list {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 10px;
+  max-height: 55vh;
+  overflow: auto;
+}
+
+.manage-list h3,
+.manage-export h3 {
+  margin: 0 0 10px;
+}
+
+.manage-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: start;
+  border-radius: 12px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.manage-row input {
+  margin-top: 3px;
+}
+
+.manage-row span,
+.manage-row small {
+  grid-column: 2;
+}
+
+.manage-row small {
+  color: var(--muted);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.manage-row--draggable {
+  cursor: grab;
+}
+
+.manage-export textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(6, 12, 18, 0.5);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 0.8rem;
+}
+
 .status {
   padding: 0.9rem 1rem;
   border-radius: 18px;
@@ -444,34 +525,29 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .content-side {
-    display: none;
-  }
-
   .hero {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .hero__meta {
-    grid-template-columns: repeat(3, 1fr);
-    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .manage-grid {
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 720px) {
   .app-shell {
-    padding: 10px;
+    padding: 8px;
   }
 
   .hero,
   .panel--section,
   .panel--form {
-    padding: 14px 16px;
-    border-radius: 18px;
-  }
-
-  .hero__meta {
-    grid-template-columns: repeat(3, 1fr);
+    padding: 12px;
+    border-radius: 14px;
   }
 
   .topbar {
@@ -492,6 +568,19 @@ button {
 
   .topbar__right {
     flex-shrink: 0;
+    min-width: 160px;
+  }
+
+  .topbar__right .search-input {
+    min-width: 120px;
+    padding: 0.7rem 0.8rem;
+  }
+
+  .chip,
+  .secondary-button,
+  .primary-button,
+  .entity-card button {
+    padding: 0.64rem 0.85rem;
   }
 
   .entity-grid {
@@ -511,6 +600,19 @@ button {
   .entity-card__state {
     padding: 0.38rem 0.6rem;
     font-size: 0.78rem;
+  }
+
+  .hero__meta {
+    gap: 6px;
+  }
+
+  .hero__meta div {
+    min-width: 66px;
+    padding: 6px 8px;
+  }
+
+  .hero__action {
+    width: 100%;
   }
 }
 

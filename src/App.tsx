@@ -14,7 +14,6 @@ import {
   fetchEntityState,
   fetchPanelSettings,
   fetchStates,
-  saveRuntimeConfig,
 } from './services/haApi'
 import type { EntityCommand, HaEntity, RouteState } from './types/ha'
 import type { PanelActionTile, PanelSettings } from './types/settings'
@@ -26,7 +25,7 @@ const parseRoute = (): RouteState => {
   if (typeof window === 'undefined') return { kind: 'dashboard' }
 
   const rawPath = window.location.pathname.replace(/\/+$/, '') || '/'
-  if (rawPath === '/connection') return { kind: 'connection' }
+  if (rawPath === '/manage') return { kind: 'manage' }
   if (rawPath === '/links') return { kind: 'links' }
   if (rawPath.startsWith('/category/')) {
     return { kind: 'category', category: decodeURIComponent(rawPath.replace('/category/', '')) }
@@ -43,8 +42,8 @@ const pushRoute = (route: RouteState) => {
       ? '/'
       : route.kind === 'links'
         ? '/links'
-        : route.kind === 'connection'
-          ? '/connection'
+        : route.kind === 'manage'
+          ? '/manage'
           : `/category/${encodeURIComponent(route.category)}`
 
   if (window.location.pathname === nextPath) return
@@ -83,6 +82,18 @@ const normalizeCardWidths = (value: unknown): Record<string, 'single' | 'double'
       )
     : {}
 
+const normalizeStringArrayMap = (value: unknown): Record<string, string[]> =>
+  typeof value === 'object' && value !== null
+    ? Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [
+          key,
+          Array.isArray(entry)
+            ? entry.filter((item): item is string => typeof item === 'string')
+            : [],
+        ]),
+      )
+    : {}
+
 const hashPin = async (value: string): Promise<string> => {
   const data = new TextEncoder().encode(value)
   const digest = await window.crypto.subtle.digest('SHA-256', data)
@@ -117,11 +128,16 @@ const normalizePanelSettings = (value: unknown): PanelSettings => {
     enabledEntities: normalizeStringArray(parsed.enabledEntities),
     nameOverrides: normalizeStringMap(parsed.nameOverrides),
     categoryMap: normalizeStringMap(parsed.categoryMap),
+    categoryTopText: normalizeStringMap(parsed.categoryTopText),
+    categoryBottomText: normalizeStringMap(parsed.categoryBottomText),
+    categoryTopEntities: normalizeStringArrayMap(parsed.categoryTopEntities),
+    categoryBottomEntities: normalizeStringArrayMap(parsed.categoryBottomEntities),
     categoryPinHashes: normalizeStringMap(parsed.categoryPinHashes),
     showIcons: normalizeBooleanMap(parsed.showIcons),
     cardWidths: normalizeCardWidths(parsed.cardWidths),
     entityOrder: normalizeStringArray(parsed.entityOrder),
     customCategories: normalizeStringArray(parsed.customCategories),
+    passwordHash: typeof parsed.passwordHash === 'string' ? parsed.passwordHash : '',
     headerEntities: {
       temperatureEntityId:
         typeof rawHeaderEntities.temperatureEntityId === 'string'
@@ -210,23 +226,24 @@ const getHeaderEntity = (
   entities.find((entity) => String(entity.attributes.device_class) === fallbackDeviceClass)
 
 function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
-  const [haUrl, setHaUrl] = useState(runtimeConfig.haUrl ?? '')
-  const [token, setToken] = useState(runtimeConfig.haToken ?? '')
-  const [draftHaUrl, setDraftHaUrl] = useState(runtimeConfig.haUrl ?? '')
-  const [draftToken, setDraftToken] = useState(runtimeConfig.haToken ?? '')
+  const haUrl = runtimeConfig.haUrl ?? ''
+  const token = runtimeConfig.haToken ?? ''
   const [entities, setEntities] = useState<HaEntity[]>([])
   const [settings, setSettings] = useState<PanelSettings>(() => createDefaultPanelSettings())
   const [route, setRoute] = useState<RouteState>(() => parseRoute())
   const [deviceId, setDeviceId] = useState('')
   const [loading, setLoading] = useState(false)
-  const [savingConnection, setSavingConnection] = useState(false)
   const [error, setError] = useState('')
-  const [storageError, setStorageError] = useState('')
   const [lastUpdated, setLastUpdated] = useState('')
   const [search, setSearch] = useState('')
   const [pendingCategoryPin, setPendingCategoryPin] = useState('')
   const [pinInput, setPinInput] = useState('')
   const [pinError, setPinError] = useState('')
+  const [manageUnlocked, setManageUnlocked] = useState(false)
+  const [managePinInput, setManagePinInput] = useState('')
+  const [managePinError, setManagePinError] = useState('')
+  const [draftEnabledEntities, setDraftEnabledEntities] = useState<string[]>([])
+  const [draggedEntityId, setDraggedEntityId] = useState('')
 
   const connectionReady = Boolean(token && haUrl)
 
@@ -250,11 +267,10 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
         const next = await fetchPanelSettings<unknown>(haUrl, token)
         if (cancelled) return
         setSettings(normalizePanelSettings(next))
-        setStorageError('')
       } catch (reason) {
         if (cancelled) return
         const message = reason instanceof Error ? reason.message : 'Unable to load panel settings.'
-        setStorageError(message)
+        setError(message)
       }
     }
 
@@ -358,24 +374,6 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     }
   }
 
-  const handleConnectionSave = async () => {
-    setSavingConnection(true)
-    try {
-      await saveRuntimeConfig(draftHaUrl, draftToken)
-      setHaUrl(draftHaUrl.trim())
-      setToken(draftToken.trim())
-      setError('')
-      const nextRoute: RouteState = { kind: 'dashboard' }
-      pushRoute(nextRoute)
-      setRoute(nextRoute)
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : 'Unable to save connection settings.'
-      setError(message)
-    } finally {
-      setSavingConnection(false)
-    }
-  }
-
   const activeProfileKey = resolveProfileKey(deviceId, settings.deviceProfiles)
   const activeProfile = activeProfileKey ? settings.profiles?.[activeProfileKey] : undefined
   const accentColor = settings.globalSettings?.accentColor ?? '#8fe3ff'
@@ -410,8 +408,18 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     return leftIndex - rightIndex
   })
 
+  useEffect(() => {
+    setDraftEnabledEntities((previous) => {
+      const known = new Set(orderedEntities.map((entity) => entity.entity_id))
+      const retained = previous.filter((entityId) => known.has(entityId))
+      const source = settings.enabledEntities.length > 0 ? settings.enabledEntities : retained
+      const uniqueSource = [...new Set(source)]
+      return uniqueSource
+    })
+  }, [orderedEntities, settings.enabledEntities])
+
   const visibleEntities = orderedEntities.filter((entity) => {
-    if (visibilitySet.size > 0 && !visibilitySet.has(entity.entity_id)) return false
+    if (!visibilitySet.has(entity.entity_id)) return false
     if (hiddenSet.has(entity.entity_id)) return false
     if (categoryMap[entity.entity_id] === 'hidden') return false
     return true
@@ -489,8 +497,8 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
       const nextRoute: RouteState =
         target === '/links'
           ? { kind: 'links' }
-          : target === '/connection'
-            ? { kind: 'connection' }
+          : target === '/manage'
+            ? { kind: 'manage' }
             : { kind: 'dashboard' }
       pushRoute(nextRoute)
       setRoute(nextRoute)
@@ -539,35 +547,156 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     await handleExecute({ domain: domain === 'input_button' ? 'button' : domain, service, data: { entity_id: entityId }, refreshTargets: [entityId, settings.headerEntities.doorContactEntityId].filter(Boolean) })
   }
 
-  const connectionPanel = (
-    <section className="panel panel--form">
+  const updateEnabledEntity = (entityId: string, enabled: boolean) => {
+    setDraftEnabledEntities((previous) => {
+      if (enabled) {
+        if (previous.includes(entityId)) return previous
+        return [...previous, entityId]
+      }
+      return previous.filter((candidate) => candidate !== entityId)
+    })
+  }
+
+  const moveEnabledEntity = (entityId: string, targetEntityId: string) => {
+    if (!entityId || !targetEntityId || entityId === targetEntityId) return
+    setDraftEnabledEntities((previous) => {
+      const sourceIndex = previous.indexOf(entityId)
+      const targetIndex = previous.indexOf(targetEntityId)
+      if (sourceIndex < 0 || targetIndex < 0) return previous
+      const next = [...previous]
+      next.splice(sourceIndex, 1)
+      next.splice(targetIndex, 0, entityId)
+      return next
+    })
+  }
+
+  const openManage = () => {
+    const nextRoute: RouteState = { kind: 'manage' }
+    pushRoute(nextRoute)
+    setRoute(nextRoute)
+    if (!settings.passwordHash) {
+      setManageUnlocked(true)
+      return
+    }
+    setManageUnlocked(false)
+    setManagePinInput('')
+    setManagePinError('')
+  }
+
+  const unlockManage = async () => {
+    if (!settings.passwordHash) {
+      setManageUnlocked(true)
+      return
+    }
+    const candidate = await hashPin(managePinInput)
+    if (candidate === settings.passwordHash) {
+      setManageUnlocked(true)
+      setManagePinError('')
+      setManagePinInput('')
+      return
+    }
+    setManagePinError('Incorrect password.')
+    setManagePinInput('')
+  }
+
+  const configRequiredPanel = (
+    <section className="panel panel--section">
       <div className="section-heading">
-        <p className="eyebrow">Connection</p>
-        <h2>Runtime endpoint</h2>
+        <p className="eyebrow">Setup Required</p>
+        <h2>Runtime connection is missing</h2>
       </div>
-      <label className="field">
-        <span>Home Assistant URL</span>
-        <input
-          value={draftHaUrl}
-          onChange={(event) => setDraftHaUrl(event.target.value)}
-          placeholder="https://homeassistant.local:8123"
-        />
-      </label>
-      <label className="field">
-        <span>Long-lived access token</span>
-        <textarea
-          value={draftToken}
-          onChange={(event) => setDraftToken(event.target.value)}
-          rows={5}
-          placeholder="Paste token"
-        />
-      </label>
-      <button className="primary-button" onClick={handleConnectionSave} disabled={savingConnection}>
-        {savingConnection ? 'Saving…' : 'Save connection'}
-      </button>
       <p className="muted">
-        This is the only writable panel surface. Profiles, hidden devices, labels, and launchers stay managed from Home Assistant.
+        Runtime URL and token editing from this frontend is disabled. Configure runtime values directly in the deployed runtime config file and reload the page.
       </p>
+    </section>
+  )
+
+  const managePanel = (
+    <section className="panel panel--section manage-panel">
+      <div className="section-heading">
+        <p className="eyebrow">Protected Setup</p>
+        <h2>Panel manager</h2>
+        <p className="muted">Enable entities and drag them to set display order.</p>
+      </div>
+
+      {!manageUnlocked && settings.passwordHash ? (
+        <div className="manage-lock">
+          <input
+            className="search-input"
+            type="password"
+            placeholder="Enter admin password"
+            value={managePinInput}
+            onChange={(event) => setManagePinInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void unlockManage()
+            }}
+          />
+          <button className="primary-button" onClick={() => void unlockManage()}>
+            Unlock
+          </button>
+          {managePinError ? <p className="status status--error">{managePinError}</p> : null}
+        </div>
+      ) : (
+        <>
+          <div className="manage-grid">
+            <section className="manage-list">
+              <h3>All entities</h3>
+              {orderedEntities.map((entity) => {
+                const checked = draftEnabledEntities.includes(entity.entity_id)
+                return (
+                  <label key={entity.entity_id} className="manage-row">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) => updateEnabledEntity(entity.entity_id, event.target.checked)}
+                    />
+                    <span>{nameOverrides[entity.entity_id] ?? getFriendlyName(entity)}</span>
+                    <small>{entity.entity_id}</small>
+                  </label>
+                )
+              })}
+            </section>
+
+            <section className="manage-list">
+              <h3>Visible order (drag and drop)</h3>
+              {draftEnabledEntities.length === 0 ? (
+                <p className="empty-state">No entities enabled yet.</p>
+              ) : (
+                draftEnabledEntities.map((entityId) => (
+                  <div
+                    key={entityId}
+                    className="manage-row manage-row--draggable"
+                    draggable
+                    onDragStart={() => setDraggedEntityId(entityId)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => moveEnabledEntity(draggedEntityId, entityId)}
+                  >
+                    <span>{nameOverrides[entityId] ?? entityId}</span>
+                    <small>{entityId}</small>
+                  </div>
+                ))
+              )}
+            </section>
+          </div>
+
+          <div className="manage-export">
+            <h3>Copy into Home Assistant config</h3>
+            <textarea
+              readOnly
+              rows={10}
+              value={JSON.stringify(
+                {
+                  enabledEntities: draftEnabledEntities,
+                  entityOrder: draftEnabledEntities,
+                },
+                null,
+                2,
+              )}
+            />
+            <p className="muted">Save this JSON fragment into your panel settings file in Home Assistant.</p>
+          </div>
+        </>
+      )}
     </section>
   )
 
@@ -577,14 +706,11 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
       <div className="ambient ambient--bottom" />
 
       <header className="hero panel">
-        <div>
+        <div className="hero__main">
           <p className="eyebrow">
             {activeProfile?.label ?? (activeProfileKey ? formatLabel(activeProfileKey) : 'Default profile')}
           </p>
           <h1>{settings.globalSettings?.title ?? 'Studio Panel'}</h1>
-          <p className="hero__subtitle">
-            {settings.globalSettings?.subtitle ?? 'Fast, lightweight control surface for studio and home spaces.'}
-          </p>
         </div>
         <div className="hero__meta">
           <div>
@@ -607,6 +733,11 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
             <span>Entry</span>
             <strong>{doorSensor ? formatLabel(doorSensor.state) : '--'}</strong>
           </div>
+          {settings.headerEntities.doorActionEntityId ? (
+            <button className="secondary-button hero__action" onClick={() => void handleDoorAction()}>
+              Open door
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -652,43 +783,40 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
             placeholder="Search entities"
           />
           <button
-            className={route.kind === 'connection' ? 'chip chip--active' : 'chip'}
-            onClick={() => {
-              const nextRoute: RouteState = { kind: 'connection' }
-              pushRoute(nextRoute)
-              setRoute(nextRoute)
-            }}
+            className={route.kind === 'manage' ? 'chip chip--active' : 'chip'}
+            onClick={openManage}
           >
-            Connection
+            Manage
           </button>
         </div>
       </nav>
 
       {error ? <p className="status status--error">{error}</p> : null}
-      {storageError ? <p className="status status--warning">{storageError}</p> : null}
 
       {!connectionReady ? (
-        <main className="content-grid content-grid--single">{connectionPanel}</main>
+        <main className="content-grid content-grid--single">{configRequiredPanel}</main>
       ) : (
-        <main className="content-grid">
+        <main className="content-grid content-grid--single">
           <section className="content-main">
-            {route.kind === 'connection' ? connectionPanel : null}
-
-            {route.kind !== 'connection' ? (
+            {route.kind === 'manage' ? (
+              managePanel
+            ) : (
               <>
-                <section className="featured-grid">
-                  {featuredEntities.map((entity) => (
-                    <EntityCard
-                      key={entity.entity_id}
-                      entity={entity}
-                      displayName={nameOverrides[entity.entity_id] ?? getFriendlyName(entity)}
-                      highlighted
-                      showIcon={settings.showIcons[entity.entity_id] !== false}
-                      isWide={settings.cardWidths[entity.entity_id] === 'double'}
-                      onExecute={handleExecute}
-                    />
-                  ))}
-                </section>
+                {route.kind === 'dashboard' && featuredEntities.length > 0 ? (
+                  <section className="featured-grid">
+                    {featuredEntities.map((entity) => (
+                      <EntityCard
+                        key={entity.entity_id}
+                        entity={entity}
+                        displayName={nameOverrides[entity.entity_id] ?? getFriendlyName(entity)}
+                        highlighted
+                        showIcon={settings.showIcons[entity.entity_id] !== false}
+                        isWide={settings.cardWidths[entity.entity_id] === 'double'}
+                        onExecute={handleExecute}
+                      />
+                    ))}
+                  </section>
+                ) : null}
 
                 <section className="panel panel--section">
                   <div className="section-heading">
@@ -742,73 +870,8 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
                   )}
                 </section>
               </>
-            ) : null}
+            )}
           </section>
-
-          <aside className="content-side">
-            <section className="panel panel--section">
-              <div className="section-heading">
-                <p className="eyebrow">Profile</p>
-                <h2>Runtime context</h2>
-              </div>
-              <dl className="facts">
-                <div>
-                  <dt>Device id</dt>
-                  <dd>{deviceId || 'loading'}</dd>
-                </div>
-                <div>
-                  <dt>Profile key</dt>
-                  <dd>{activeProfileKey || 'default'}</dd>
-                </div>
-                <div>
-                  <dt>Visible devices</dt>
-                  <dd>{visibleEntities.length}</dd>
-                </div>
-                <div>
-                  <dt>Launchers</dt>
-                  <dd>{actionTiles.length}</dd>
-                </div>
-              </dl>
-            </section>
-
-            <section className="panel panel--section">
-              <div className="section-heading">
-                <p className="eyebrow">Categories</p>
-                <h2>Fast jump</h2>
-              </div>
-              <div className="category-list">
-                {categories.map((category) => (
-                  <button
-                    key={category}
-                    className="list-button"
-                    onClick={() => openCategory(category)}
-                  >
-                    <span>{category}</span>
-                    <strong>
-                      {
-                        visibleEntities.filter(
-                          (entity) => (categoryMap[entity.entity_id] || getDefaultCategory(entity)) === category,
-                        ).length
-                      }
-                    </strong>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="panel panel--section">
-              <div className="section-heading">
-                <p className="eyebrow">Operations</p>
-                <h2>Management boundary</h2>
-              </div>
-              <p className="muted">
-                Device visibility, launcher tiles, labels, and per-device rules are read from Home Assistant server-side settings. Use Home Assistant services or integration tools for administration.
-              </p>
-              <button className="secondary-button" onClick={() => void handleDoorAction()}>
-                Trigger door action
-              </button>
-            </section>
-          </aside>
         </main>
       )}
 
