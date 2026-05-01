@@ -55,8 +55,14 @@ export const fetchStates = (haUrl: string, token: string) =>
 export const fetchEntityState = (haUrl: string, token: string, entityId: string) =>
   apiFetch<HaEntity>(haUrl, token, `/states/${encodeURIComponent(entityId)}`)
 
-export const fetchPanelEntities = (haUrl: string, token: string) =>
-  apiFetch<HaEntity[]>(haUrl, token, '/studio_panel/entities')
+export const fetchPanelEntities = async (haUrl: string, token: string) => {
+  try {
+    return await apiFetch<HaEntity[]>(haUrl, token, '/studio_panel/entities')
+  } catch {
+    // Fallback for environments where the custom endpoint is not reachable via proxy.
+    return apiFetch<HaEntity[]>(haUrl, token, '/states')
+  }
+}
 
 export const callService = (
   haUrl: string,
