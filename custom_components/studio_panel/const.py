@@ -17,6 +17,10 @@ ALLOWED_SETTINGS_KEYS = (
 	"showIcons",
 	"passwordHash",
 	"headerEntities",
+	"globalSettings",
+	"profiles",
+	"deviceProfiles",
+	"actionTiles",
 )
 SERVICE_SET_PASSWORD = "set_password"
 SERVICE_UPDATE_SETTINGS = "update_settings"

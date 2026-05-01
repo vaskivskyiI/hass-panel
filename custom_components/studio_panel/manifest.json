@@ -1,7 +1,7 @@
 {
   "domain": "studio_panel",
   "name": "Studio Panel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "documentation": "https://github.com/vaskivskyiI/hass-panel",
   "issue_tracker": "https://github.com/vaskivskyiI/hass-panel/issues",
   "requirements": [],
