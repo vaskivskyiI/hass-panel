@@ -14,6 +14,7 @@ import {
   fetchEntityState,
   fetchPanelSettings,
   fetchStates,
+  savePanelSettings,
 } from './services/haApi'
 import type { EntityCommand, HaEntity, RouteState } from './types/ha'
 import type { PanelActionTile, PanelSettings } from './types/settings'
@@ -244,6 +245,14 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
   const [managePinError, setManagePinError] = useState('')
   const [draftEnabledEntities, setDraftEnabledEntities] = useState<string[]>([])
   const [draggedEntityId, setDraggedEntityId] = useState('')
+  const [draftNameOverrides, setDraftNameOverrides] = useState<Record<string, string>>({})
+  const [draftCategoryMap, setDraftCategoryMap] = useState<Record<string, string>>({})
+  const [draftCardWidths, setDraftCardWidths] = useState<Record<string, 'single' | 'double'>>({})
+  const [draftShowIcons, setDraftShowIcons] = useState<Record<string, boolean>>({})
+  const [draftCustomCategories, setDraftCustomCategories] = useState<string[]>([])
+  const [draftNewCategory, setDraftNewCategory] = useState('')
+  const [manageSaving, setManageSaving] = useState(false)
+  const [manageStatus, setManageStatus] = useState('')
 
   const connectionReady = Boolean(token && haUrl)
 
@@ -412,9 +421,11 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     setDraftEnabledEntities((previous) => {
       const known = new Set(orderedEntities.map((entity) => entity.entity_id))
       const retained = previous.filter((entityId) => known.has(entityId))
-      const source = settings.enabledEntities.length > 0 ? settings.enabledEntities : retained
-      const uniqueSource = [...new Set(source)]
-      return uniqueSource
+      if (previous.length > 0) {
+        return retained
+      }
+      const source = settings.enabledEntities.filter((entityId) => known.has(entityId))
+      return [...new Set(source)]
     })
   }, [orderedEntities, settings.enabledEntities])
 
@@ -570,12 +581,24 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
     })
   }
 
+  const syncManageDraftFromSettings = () => {
+    setDraftEnabledEntities(settings.enabledEntities)
+    setDraftNameOverrides(settings.nameOverrides)
+    setDraftCategoryMap(settings.categoryMap)
+    setDraftCardWidths(settings.cardWidths)
+    setDraftShowIcons(settings.showIcons)
+    setDraftCustomCategories(settings.customCategories)
+    setDraftNewCategory('')
+    setManageStatus('')
+  }
+
   const openManage = () => {
     const nextRoute: RouteState = { kind: 'manage' }
     pushRoute(nextRoute)
     setRoute(nextRoute)
     if (!settings.passwordHash) {
       setManageUnlocked(true)
+      syncManageDraftFromSettings()
       return
     }
     setManageUnlocked(false)
@@ -593,10 +616,72 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
       setManageUnlocked(true)
       setManagePinError('')
       setManagePinInput('')
+      syncManageDraftFromSettings()
       return
     }
     setManagePinError('Incorrect password.')
     setManagePinInput('')
+  }
+
+  const updateDraftNameOverride = (entityId: string, value: string) => {
+    setDraftNameOverrides((previous) => ({ ...previous, [entityId]: value }))
+  }
+
+  const updateDraftCategory = (entityId: string, value: string) => {
+    setDraftCategoryMap((previous) => ({ ...previous, [entityId]: value }))
+    if (value.trim() && !draftCustomCategories.includes(value.trim())) {
+      setDraftCustomCategories((previous) => [...previous, value.trim()])
+    }
+  }
+
+  const updateDraftWidth = (entityId: string, value: 'single' | 'double') => {
+    setDraftCardWidths((previous) => ({ ...previous, [entityId]: value }))
+  }
+
+  const updateDraftShowIcon = (entityId: string, value: boolean) => {
+    setDraftShowIcons((previous) => ({ ...previous, [entityId]: value }))
+  }
+
+  const addCustomCategory = () => {
+    const value = draftNewCategory.trim()
+    if (!value) return
+    if (draftCustomCategories.includes(value)) {
+      setDraftNewCategory('')
+      return
+    }
+    setDraftCustomCategories((previous) => [...previous, value])
+    setDraftNewCategory('')
+  }
+
+  const removeCustomCategory = (category: string) => {
+    setDraftCustomCategories((previous) => previous.filter((candidate) => candidate !== category))
+  }
+
+  const saveManageSettings = async () => {
+    setManageSaving(true)
+    setManageStatus('Saving settings...')
+    try {
+      const payload: PanelSettings = {
+        ...settings,
+        enabledEntities: [...draftEnabledEntities],
+        entityOrder: [...draftEnabledEntities],
+        nameOverrides: { ...draftNameOverrides },
+        categoryMap: { ...draftCategoryMap },
+        cardWidths: { ...draftCardWidths },
+        showIcons: { ...draftShowIcons },
+        customCategories: [...draftCustomCategories],
+      }
+
+      await savePanelSettings(haUrl, token, payload as unknown as Record<string, unknown>)
+      const refreshed = await fetchPanelSettings<unknown>(haUrl, token)
+      setSettings(normalizePanelSettings(refreshed))
+      setManageStatus('Saved.')
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'Unable to save settings.'
+      setManageStatus(message)
+    } finally {
+      setManageSaving(false)
+    }
   }
 
   const configRequiredPanel = (
@@ -616,7 +701,7 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
       <div className="section-heading">
         <p className="eyebrow">Protected Setup</p>
         <h2>Panel manager</h2>
-        <p className="muted">Enable entities and drag them to set display order.</p>
+        <p className="muted">Configure panel entities visually and save directly.</p>
       </div>
 
       {!manageUnlocked && settings.passwordHash ? (
@@ -638,23 +723,104 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
         </div>
       ) : (
         <>
+          <section className="manage-categories">
+            <h3>Categories</h3>
+            <div className="manage-categories__add">
+              <input
+                className="search-input"
+                value={draftNewCategory}
+                onChange={(event) => setDraftNewCategory(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') addCustomCategory()
+                }}
+                placeholder="Add category"
+              />
+              <button className="secondary-button" onClick={addCustomCategory}>
+                Add
+              </button>
+            </div>
+            <div className="manage-categories__chips">
+              {draftCustomCategories.map((category) => (
+                <button
+                  key={category}
+                  className="chip"
+                  onClick={() => removeCustomCategory(category)}
+                  title="Remove category"
+                >
+                  {category} ×
+                </button>
+              ))}
+            </div>
+          </section>
+
           <div className="manage-grid">
             <section className="manage-list">
               <h3>All entities</h3>
               {orderedEntities.map((entity) => {
                 const checked = draftEnabledEntities.includes(entity.entity_id)
+                const categoryValue = draftCategoryMap[entity.entity_id] || getDefaultCategory(entity)
                 return (
-                  <label key={entity.entity_id} className="manage-row">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(event) => updateEnabledEntity(entity.entity_id, event.target.checked)}
-                    />
-                    <span>{nameOverrides[entity.entity_id] ?? getFriendlyName(entity)}</span>
-                    <small>{entity.entity_id}</small>
-                  </label>
+                  <div key={entity.entity_id} className="manage-row manage-row--editor">
+                    <label className="manage-row__toggle">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => updateEnabledEntity(entity.entity_id, event.target.checked)}
+                      />
+                      <span>{entity.entity_id}</span>
+                    </label>
+                    <label>
+                      <span>Name</span>
+                      <input
+                        className="search-input"
+                        value={draftNameOverrides[entity.entity_id] ?? ''}
+                        onChange={(event) =>
+                          updateDraftNameOverride(entity.entity_id, event.target.value)
+                        }
+                        placeholder={getFriendlyName(entity)}
+                      />
+                    </label>
+                    <label>
+                      <span>Category</span>
+                      <input
+                        className="search-input"
+                        value={categoryValue}
+                        onChange={(event) => updateDraftCategory(entity.entity_id, event.target.value)}
+                        list="manage-categories-list"
+                      />
+                    </label>
+                    <div className="manage-row__inline">
+                      <label>
+                        <span>Width</span>
+                        <select
+                          value={draftCardWidths[entity.entity_id] ?? 'single'}
+                          onChange={(event) =>
+                            updateDraftWidth(entity.entity_id, event.target.value as 'single' | 'double')
+                          }
+                        >
+                          <option value="single">Single</option>
+                          <option value="double">Double</option>
+                        </select>
+                      </label>
+                      <label className="manage-row__icon-toggle">
+                        <span>Icon</span>
+                        <input
+                          type="checkbox"
+                          checked={draftShowIcons[entity.entity_id] !== false}
+                          onChange={(event) =>
+                            updateDraftShowIcon(entity.entity_id, event.target.checked)
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
                 )
               })}
+              <datalist id="manage-categories-list">
+                {draftCustomCategories.map((category) => (
+                  <option key={category} value={category} />
+                ))}
+              </datalist>
             </section>
 
             <section className="manage-list">
@@ -679,21 +845,18 @@ function App({ runtimeConfig }: { runtimeConfig: RuntimeConfig }) {
             </section>
           </div>
 
-          <div className="manage-export">
-            <h3>Copy into Home Assistant config</h3>
-            <textarea
-              readOnly
-              rows={10}
-              value={JSON.stringify(
-                {
-                  enabledEntities: draftEnabledEntities,
-                  entityOrder: draftEnabledEntities,
-                },
-                null,
-                2,
-              )}
-            />
-            <p className="muted">Save this JSON fragment into your panel settings file in Home Assistant.</p>
+          <div className="manage-actions">
+            <button
+              className="primary-button"
+              onClick={() => void saveManageSettings()}
+              disabled={manageSaving}
+            >
+              {manageSaving ? 'Saving...' : 'Save Settings'}
+            </button>
+            <button className="secondary-button" onClick={syncManageDraftFromSettings}>
+              Reset Draft
+            </button>
+            {manageStatus ? <p className="muted">{manageStatus}</p> : null}
           </div>
         </>
       )}

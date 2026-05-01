@@ -70,6 +70,12 @@ export const callService = (
 export const fetchPanelSettings = <T>(haUrl: string, token: string) =>
   apiFetch<T>(haUrl, token, settingsApiPath)
 
+export const savePanelSettings = (haUrl: string, token: string, payload: Record<string, unknown>) =>
+  apiFetch<{ status: string }>(haUrl, token, settingsApiPath, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+
 export const saveRuntimeConfig = async (haUrl: string, haToken: string) => {
   const response = await fetch(runtimeConfigApiPath, {
     method: 'PUT',
