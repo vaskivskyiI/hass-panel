@@ -9,6 +9,8 @@ DEFAULT_SETTINGS = {
     "categoryMap": {},
     "cardWidths": {},
     "showIcons": {},
+    "titleModes": {},
+    "stateLabels": {},
     "customCategories": [],
     "categoryPinHashes": {},
     "categoryTopText": {},

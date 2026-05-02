@@ -23,10 +23,36 @@ def _bool_map(value: Any) -> dict[str, bool]:
     return {str(k): bool(v) for k, v in value.items() if isinstance(v, bool)}
 
 
+def _title_mode_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in value.items():
+        if v in ("name", "name_icon", "icon"):
+            out[str(k)] = str(v)
+    return out
+
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, str)]
+
+
+def _state_labels_map(value: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for entity_id, labels in value.items():
+        if not isinstance(labels, dict):
+            continue
+        on_label = labels.get("on")
+        off_label = labels.get("off")
+        out[str(entity_id)] = {
+            "on": on_label if isinstance(on_label, str) else "On",
+            "off": off_label if isinstance(off_label, str) else "Off",
+        }
+    return out
 
 
 def _string_list_map(value: Any) -> dict[str, list[str]]:
@@ -152,6 +178,8 @@ def _sanitize_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged["categoryMap"] = _string_map(source.get("categoryMap"))
     merged["cardWidths"] = _card_width_map(source.get("cardWidths"))
     merged["showIcons"] = _bool_map(source.get("showIcons"))
+    merged["titleModes"] = _title_mode_map(source.get("titleModes"))
+    merged["stateLabels"] = _state_labels_map(source.get("stateLabels"))
     merged["customCategories"] = _string_list(source.get("customCategories"))
     merged["categoryPinHashes"] = _string_map(source.get("categoryPinHashes"))
     merged["categoryTopText"] = _string_map(source.get("categoryTopText"))

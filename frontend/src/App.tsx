@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ActionTile, HaEntity, ProfileConfig, RuntimeConfig, SceneButton, Settings } from './types'
 
-// ── Light feature detection ──────────────────────────────────────────────────
 const LIGHT_COLOR_MODES = new Set(['hs', 'xy', 'rgb', 'rgbw', 'rgbww'])
 const LIGHT_COLOR_TEMP_MODES = new Set(['color_temp', 'rgbww'])
+const ADMIN_CATEGORY_ID = '__admin__'
+const ADMIN_DEFAULT_HASH = '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918'
+const HEADER_KEYS = ['temperatureEntityId', 'humidityEntityId', 'doorContactEntityId', 'doorActionEntityId'] as const
 
-// ── Defaults ─────────────────────────────────────────────────────────────────
 const defaultSettings: Settings = {
   enabledEntities: [],
   entityOrder: [],
@@ -13,6 +14,8 @@ const defaultSettings: Settings = {
   categoryMap: {},
   cardWidths: {},
   showIcons: {},
+  titleModes: {},
+  stateLabels: {},
   customCategories: [],
   categoryPinHashes: {},
   categoryTopText: {},
@@ -39,17 +42,27 @@ const defaultSettings: Settings = {
   actionTiles: [],
 }
 
-const defaultRuntime: RuntimeConfig = { haUrl: '', haToken: '' }
+const defaultRuntime: RuntimeConfig = {
+  haUrl: '',
+  haToken: '',
+}
 
 const tabs = ['entities', 'categories', 'scenes', 'actions', 'profiles', 'header', 'runtime'] as const
-type ManageTab = (typeof tabs)[number]
 
-// ── Pure helpers ──────────────────────────────────────────────────────────────
+type ManageTab = (typeof tabs)[number]
+type HeaderKey = (typeof HEADER_KEYS)[number]
+
+type LightMemory = {
+  brightness?: number
+  color?: string
+  kelvin?: number
+}
+
 const parseError = async (response: Response): Promise<string> => {
   const text = await response.text()
   try {
     const parsed = JSON.parse(text) as { error?: { message?: string } }
-    return parsed.error?.message ?? text
+    return parsed.error?.message || text
   } catch {
     return text || `Request failed (${response.status})`
   }
@@ -58,10 +71,18 @@ const parseError = async (response: Response): Promise<string> => {
 const normalizeSettings = (value: Partial<Settings>): Settings => ({
   ...defaultSettings,
   ...value,
-  headerEntities: { ...defaultSettings.headerEntities, ...(value.headerEntities ?? {}) },
-  globalSettings: { ...defaultSettings.globalSettings, ...(value.globalSettings ?? {}) },
+  headerEntities: {
+    ...defaultSettings.headerEntities,
+    ...(value.headerEntities ?? {}),
+  },
+  globalSettings: {
+    ...defaultSettings.globalSettings,
+    ...(value.globalSettings ?? {}),
+  },
   profiles: value.profiles ?? {},
   actionTiles: value.actionTiles ?? [],
+  titleModes: value.titleModes ?? {},
+  stateLabels: value.stateLabels ?? {},
 })
 
 const getDomain = (entityId: string) => entityId.split('.')[0] ?? ''
@@ -70,38 +91,71 @@ const getDefaultCategory = (entity: HaEntity) => {
   const domain = getDomain(entity.entity_id)
   if (['light', 'switch', 'fan', 'cover'].includes(domain)) return 'Controls'
   if (['climate', 'humidifier'].includes(domain)) return 'Climate'
-  if (['lock', 'alarm_control_panel', 'binary_sensor'].includes(domain)) return 'Security'
+  if (['lock', 'alarm_control_panel', 'binary_sensor', 'button'].includes(domain)) return 'Security'
   if (['scene', 'script', 'automation', 'media_player', 'vacuum'].includes(domain)) return 'Actions'
   return 'General'
 }
 
 const getFriendlyName = (entity: HaEntity) => {
-  const n = entity.attributes.friendly_name
-  return typeof n === 'string' && n.trim() ? n : entity.entity_id
+  const friendly = entity.attributes.friendly_name
+  if (typeof friendly === 'string' && friendly.trim()) return friendly
+  return entity.entity_id
 }
 
 const toNum = (value: unknown, fallback: number) => {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
-    const n = Number(value)
-    if (Number.isFinite(n)) return n
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
   }
   return fallback
 }
 
 const hexToRgb = (hex: string): [number, number, number] => {
-  const h = hex.replace('#', '')
-  if (h.length !== 6) return [255, 255, 255]
-  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+  const normalized = hex.replace('#', '')
+  if (normalized.length !== 6) return [255, 255, 255]
+  return [
+    parseInt(normalized.slice(0, 2), 16),
+    parseInt(normalized.slice(2, 4), 16),
+    parseInt(normalized.slice(4, 6), 16),
+  ]
 }
 
-const rgbToHex = (rgb?: unknown): string => {
-  if (!Array.isArray(rgb) || rgb.length < 3) return '#f5dc9a'
-  const ch = (v: unknown) => Math.max(0, Math.min(255, toNum(v, 255))).toString(16).padStart(2, '0')
-  return `#${ch(rgb[0])}${ch(rgb[1])}${ch(rgb[2])}`
+const rgbToHex = (rgb?: unknown): string | undefined => {
+  if (!Array.isArray(rgb) || rgb.length < 3) return undefined
+  const channel = (value: unknown) =>
+    Math.max(0, Math.min(255, toNum(value, 255))).toString(16).padStart(2, '0')
+  return `#${channel(rgb[0])}${channel(rgb[1])}${channel(rgb[2])}`
 }
 
-// Apply optimistic entity state/attribute change (no API call)
+const iconClassFromEntity = (entity: HaEntity): string => {
+  const icon = entity.attributes.icon
+  if (typeof icon === 'string' && icon.startsWith('mdi:')) {
+    return `mdi mdi-${icon.slice(4)}`
+  }
+  const fallback: Record<string, string> = {
+    light: 'mdi-lightbulb',
+    switch: 'mdi-toggle-switch',
+    fan: 'mdi-fan',
+    climate: 'mdi-thermometer',
+    cover: 'mdi-window-shutter',
+    lock: 'mdi-lock',
+    binary_sensor: 'mdi-radar',
+    button: 'mdi-gesture-tap-button',
+  }
+  return `mdi ${fallback[getDomain(entity.entity_id)] ?? 'mdi-home-assistant'}`
+}
+
+const isOnState = (entity: HaEntity) => {
+  const state = entity.state
+  return ['on', 'open', 'unlocked', 'playing', 'heat', 'cool', 'auto'].includes(state)
+}
+
+const canCardToggle = (entity: HaEntity) => {
+  const domain = getDomain(entity.entity_id)
+  return ['light', 'switch', 'fan', 'lock', 'button'].includes(domain)
+}
+
 const applyOptimistic = (
   list: HaEntity[],
   entityId: string,
@@ -114,43 +168,74 @@ const applyOptimistic = (
     let state = entity.state
 
     switch (service) {
-      case 'turn_on':       state = 'on';      break
-      case 'turn_off':      state = 'off';     break
-      case 'open_cover':    state = 'open';    break
-      case 'close_cover':   state = 'closed';  break
-      case 'lock':          state = 'locked';  break
-      case 'unlock':        state = 'unlocked'; break
+      case 'turn_on':
+        state = 'on'
+        break
+      case 'turn_off':
+        state = 'off'
+        break
+      case 'open_cover':
+        state = 'open'
+        break
+      case 'close_cover':
+        state = 'closed'
+        break
+      case 'lock':
+        state = 'locked'
+        break
+      case 'unlock':
+        state = 'unlocked'
+        break
       case 'set_hvac_mode':
         state = String(payload.hvac_mode ?? state)
         attrs.hvac_mode = payload.hvac_mode
         break
+      default:
+        break
     }
 
-    if (payload.brightness        !== undefined) attrs.brightness        = payload.brightness
-    if (payload.rgb_color         !== undefined) attrs.rgb_color         = payload.rgb_color
+    if (payload.brightness !== undefined) attrs.brightness = payload.brightness
+    if (payload.rgb_color !== undefined) attrs.rgb_color = payload.rgb_color
     if (payload.color_temp_kelvin !== undefined) attrs.color_temp_kelvin = payload.color_temp_kelvin
-    if (payload.percentage        !== undefined) attrs.percentage        = payload.percentage
-    if (payload.temperature       !== undefined) attrs.temperature       = payload.temperature
+    if (payload.percentage !== undefined) attrs.percentage = payload.percentage
+    if (payload.temperature !== undefined) attrs.temperature = payload.temperature
 
     return { ...entity, state, attributes: attrs }
   })
 
-// ── Component ─────────────────────────────────────────────────────────────────
-export function App() {
-  const [entities,         setEntities        ] = useState<HaEntity[]>([])
-  const [settings,         setSettings        ] = useState<Settings>(defaultSettings)
-  const [runtime,          setRuntime         ] = useState<RuntimeConfig>(defaultRuntime)
-  const [search,           setSearch          ] = useState('')
-  const [manageMode,       setManageMode      ] = useState(false)
-  const [manageTab,        setManageTab       ] = useState<ManageTab>('entities')
-  const [statusText,       setStatusText      ] = useState('')
-  const [adminToken,       setAdminToken      ] = useState('')
-  const [dragEntityId,     setDragEntityId    ] = useState('')
-  const [newCategory,      setNewCategory     ] = useState('')
-  const [newProfileKey,    setNewProfileKey   ] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+const sortEntities = (items: HaEntity[]) =>
+  [...items].sort((a, b) => getFriendlyName(a).localeCompare(getFriendlyName(b)))
 
-  // ── API helper ──────────────────────────────────────────────────────────
+const sha256 = async (value: string): Promise<string> => {
+  const data = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export function App() {
+  const [entities, setEntities] = useState<HaEntity[]>([])
+  const [settings, setSettings] = useState<Settings>(defaultSettings)
+  const [runtime, setRuntime] = useState<RuntimeConfig>(defaultRuntime)
+  const [search, setSearch] = useState('')
+  const [manageTab, setManageTab] = useState<ManageTab>('entities')
+  const [statusText, setStatusText] = useState('')
+  const [adminToken, setAdminToken] = useState('')
+  const [dragEntityId, setDragEntityId] = useState('')
+  const [newCategory, setNewCategory] = useState('')
+  const [newProfileKey, setNewProfileKey] = useState('')
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [adminUnlocked, setAdminUnlocked] = useState(false)
+  const [adminPassword, setAdminPassword] = useState('')
+  const [headerSearch, setHeaderSearch] = useState<Record<HeaderKey, string>>({
+    temperatureEntityId: '',
+    humidityEntityId: '',
+    doorContactEntityId: '',
+    doorActionEntityId: '',
+  })
+  const [sceneSearch, setSceneSearch] = useState<Record<number, string>>({})
+  const [lightMemory, setLightMemory] = useState<Record<string, LightMemory>>({})
+  const refreshSeq = useRef(0)
+
   const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
     const response = await fetch(path, {
       ...options,
@@ -165,8 +250,8 @@ export function App() {
     return response.json() as Promise<T>
   }
 
-  // ── Load from backend ───────────────────────────────────────────────────
   const loadAll = async () => {
+    setStatusText('Loading...')
     try {
       const [nextSettings, nextEntities, nextRuntime] = await Promise.all([
         api<Settings>('/api/settings'),
@@ -176,111 +261,236 @@ export function App() {
       setSettings(normalizeSettings(nextSettings))
       setEntities(Array.isArray(nextEntities) ? nextEntities : [])
       setRuntime({ haUrl: nextRuntime.haUrl ?? '', haToken: nextRuntime.haToken ?? '' })
-      setStatusText(`${nextEntities.length} entities`)
+      setStatusText('Loaded')
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : 'Load failed')
     }
   }
 
-  useEffect(() => { void loadAll() }, [])
-
-  // ── Optimistic local attribute preview (slider drag, no API call) ────────
-  const previewAttr = (entityId: string, attrs: Record<string, unknown>) => {
-    setEntities((prev) =>
-      prev.map((e) =>
-        e.entity_id === entityId ? { ...e, attributes: { ...e.attributes, ...attrs } } : e,
-      ),
-    )
+  const refreshEntitiesOnly = async (seq: number) => {
+    try {
+      const nextEntities = await api<HaEntity[]>('/api/entities')
+      if (seq === refreshSeq.current) {
+        setEntities(Array.isArray(nextEntities) ? nextEntities : [])
+      }
+    } catch {
+      // ignore transient fetch errors while background syncing
+    }
   }
 
-  // ── Service call with immediate optimistic state update ──────────────────
-  const callService = async (
-    domain: string,
-    service: string,
-    payload: Record<string, unknown>,
-  ) => {
+  useEffect(() => {
+    void loadAll()
+  }, [])
+
+  useEffect(() => {
+    setLightMemory((prev) => {
+      const next = { ...prev }
+      for (const entity of entities) {
+        if (getDomain(entity.entity_id) !== 'light') continue
+        const current = next[entity.entity_id] ?? {}
+        const brightness = entity.attributes.brightness
+        const color = rgbToHex(entity.attributes.rgb_color)
+        const kelvin = entity.attributes.color_temp_kelvin
+        if (brightness !== undefined) current.brightness = toNum(brightness, current.brightness ?? 1)
+        if (color) current.color = color
+        if (kelvin !== undefined) current.kelvin = toNum(kelvin, current.kelvin ?? 2700)
+        next[entity.entity_id] = current
+      }
+      return next
+    })
+  }, [entities])
+
+  const callService = async (domain: string, service: string, payload: Record<string, unknown>) => {
     const entityId = String(payload.entity_id ?? '')
+    const seq = ++refreshSeq.current
     setEntities((prev) => applyOptimistic(prev, entityId, service, payload))
+
     try {
       await api('/api/service/' + domain + '/' + service, {
         method: 'POST',
         body: JSON.stringify(payload),
       })
-      void loadAll() // sync actual HA state in background
+      setTimeout(() => {
+        void refreshEntitiesOnly(seq)
+      }, 700)
+      setTimeout(() => {
+        void refreshEntitiesOnly(seq)
+      }, 1800)
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : 'Service call failed')
       void loadAll()
     }
   }
 
-  // ── Derived lists ─────────────────────────────────────────────────────────
-  // All entities filtered by search — used in Manage tab
-  const allFiltered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return entities
-    return entities.filter((e) => {
-      const display = String(settings.nameOverrides[e.entity_id] ?? getFriendlyName(e))
-      return `${e.entity_id} ${display}`.toLowerCase().includes(q)
-    })
-  }, [entities, search, settings.nameOverrides])
+  const onCardToggle = (entity: HaEntity) => {
+    if (!canCardToggle(entity)) return
+    const domain = getDomain(entity.entity_id)
 
-  // Enabled entities in user-defined order — used in Dashboard
+    if (domain === 'button') {
+      void callService('button', 'press', { entity_id: entity.entity_id })
+      return
+    }
+
+    if (domain === 'lock') {
+      const service = entity.state === 'locked' ? 'unlock' : 'lock'
+      void callService('lock', service, { entity_id: entity.entity_id })
+      return
+    }
+
+    const service = entity.state === 'on' ? 'turn_off' : 'turn_on'
+    void callService(domain, service, { entity_id: entity.entity_id })
+  }
+
+  const previewAttr = (entityId: string, attrs: Record<string, unknown>) => {
+    setEntities((prev) =>
+      prev.map((entity) =>
+        entity.entity_id === entityId
+          ? { ...entity, attributes: { ...entity.attributes, ...attrs } }
+          : entity,
+      ),
+    )
+  }
+
+  const sortedEntities = useMemo(() => sortEntities(entities), [entities])
+
+  const allFiltered = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    const base = sortedEntities
+    if (!query) return base
+    return base.filter((entity) => {
+      const display = String(settings.nameOverrides[entity.entity_id] ?? getFriendlyName(entity))
+      return `${entity.entity_id} ${display}`.toLowerCase().includes(query)
+    })
+  }, [search, settings.nameOverrides, sortedEntities])
+
   const dashboardEntities = useMemo(() => {
     const ordered = [...entities].sort((a, b) => {
       const ai = settings.entityOrder.indexOf(a.entity_id)
       const bi = settings.entityOrder.indexOf(b.entity_id)
-      if (ai === -1 && bi === -1) return a.entity_id.localeCompare(b.entity_id)
+      if (ai === -1 && bi === -1) return getFriendlyName(a).localeCompare(getFriendlyName(b))
       if (ai === -1) return 1
       if (bi === -1) return -1
       return ai - bi
     })
-    return ordered.filter((e) => settings.enabledEntities.includes(e.entity_id))
+    return ordered.filter((entity) => settings.enabledEntities.includes(entity.entity_id))
   }, [entities, settings.enabledEntities, settings.entityOrder])
 
+  const discoveredCategories = useMemo(() => {
+    const set = new Set<string>()
+    for (const entity of dashboardEntities) {
+      set.add(settings.categoryMap[entity.entity_id] ?? getDefaultCategory(entity))
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [dashboardEntities, settings.categoryMap])
+
   const categories = useMemo(() => {
-    if (settings.customCategories.length > 0) return settings.customCategories
-    return Array.from(
-      new Set(dashboardEntities.map((e) => settings.categoryMap[e.entity_id] ?? getDefaultCategory(e))),
-    )
-  }, [dashboardEntities, settings.customCategories, settings.categoryMap])
+    const list = settings.customCategories.length > 0 ? settings.customCategories : discoveredCategories
+    return [...list].sort((a, b) => a.localeCompare(b))
+  }, [settings.customCategories, discoveredCategories])
+
+  const categoryOptions = useMemo(() => {
+    const merged = new Set<string>([...categories, ...discoveredCategories, 'General'])
+    return Array.from(merged).sort((a, b) => a.localeCompare(b))
+  }, [categories, discoveredCategories])
 
   const entitiesByCategory = useMemo(() => {
     const map = new Map<string, HaEntity[]>()
-    for (const cat of categories) map.set(cat, [])
+    for (const category of categories) map.set(category, [])
     for (const entity of dashboardEntities) {
-      const cat = settings.categoryMap[entity.entity_id] ?? getDefaultCategory(entity)
-      if (!map.has(cat)) map.set(cat, [])
-      map.get(cat)!.push(entity)
+      const category = settings.categoryMap[entity.entity_id] ?? getDefaultCategory(entity)
+      if (!map.has(category)) map.set(category, [])
+      map.get(category)!.push(entity)
     }
     return map
   }, [categories, dashboardEntities, settings.categoryMap])
 
+  const entityMap = useMemo(() => {
+    const map = new Map<string, HaEntity>()
+    for (const entity of entities) map.set(entity.entity_id, entity)
+    return map
+  }, [entities])
+
   const enabledOrder = useMemo(() => {
-    const ids = new Set(entities.map((e) => e.entity_id))
-    const fromOrder = settings.entityOrder.filter((id) => ids.has(id))
-    const extras = settings.enabledEntities.filter((id) => ids.has(id) && !fromOrder.includes(id))
+    const entitySet = new Set(entities.map((entity) => entity.entity_id))
+    const fromOrder = settings.entityOrder.filter((entityId) => entitySet.has(entityId))
+    const extras = settings.enabledEntities
+      .filter((entityId) => entitySet.has(entityId) && !fromOrder.includes(entityId))
+      .sort((a, b) => a.localeCompare(b))
     return [...fromOrder, ...extras]
   }, [entities, settings.entityOrder, settings.enabledEntities])
 
-  // ── Manage helpers ─────────────────────────────────────────────────────────
+  const automationEntities = useMemo(
+    () => sortedEntities.filter((entity) => getDomain(entity.entity_id) === 'automation'),
+    [sortedEntities],
+  )
+
+  const entityChoices = (query: string) => {
+    const q = query.trim().toLowerCase()
+    if (!q) return sortedEntities
+    return sortedEntities.filter((entity) => {
+      const label = getFriendlyName(entity)
+      return `${entity.entity_id} ${label}`.toLowerCase().includes(q)
+    })
+  }
+
+  const getStateLabels = (entityId: string) => settings.stateLabels[entityId] ?? { on: 'On', off: 'Off' }
+
+  const displayState = (entity: HaEntity) => {
+    const labels = getStateLabels(entity.entity_id)
+    if (entity.state === 'on') return labels.on
+    if (entity.state === 'off') return labels.off
+    return entity.state
+  }
+
+  const setNameOverride = (entityId: string, value: string) => {
+    setSettings((prev) => ({ ...prev, nameOverrides: { ...prev.nameOverrides, [entityId]: value } }))
+  }
+
+  const setCategory = (entityId: string, value: string) => {
+    setSettings((prev) => ({ ...prev, categoryMap: { ...prev.categoryMap, [entityId]: value } }))
+  }
+
+  const setCardWidth = (entityId: string, value: 'single' | 'double') => {
+    setSettings((prev) => ({ ...prev, cardWidths: { ...prev.cardWidths, [entityId]: value } }))
+  }
+
+  const setTitleMode = (entityId: string, value: 'name' | 'name_icon' | 'icon') => {
+    setSettings((prev) => ({ ...prev, titleModes: { ...prev.titleModes, [entityId]: value } }))
+  }
+
+  const setStateLabel = (entityId: string, key: 'on' | 'off', value: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      stateLabels: {
+        ...prev.stateLabels,
+        [entityId]: {
+          ...(prev.stateLabels[entityId] ?? { on: 'On', off: 'Off' }),
+          [key]: value,
+        },
+      },
+    }))
+  }
+
   const toggleEntity = (entityId: string, enabled: boolean) => {
     setSettings((prev) => {
       const enabledEntities = enabled
         ? [...new Set([...prev.enabledEntities, entityId])]
-        : prev.enabledEntities.filter((id) => id !== entityId)
+        : prev.enabledEntities.filter((item) => item !== entityId)
       const entityOrder = enabled
-        ? prev.entityOrder.includes(entityId) ? prev.entityOrder : [...prev.entityOrder, entityId]
-        : prev.entityOrder.filter((id) => id !== entityId)
+        ? prev.entityOrder.includes(entityId)
+          ? prev.entityOrder
+          : [...prev.entityOrder, entityId]
+        : prev.entityOrder.filter((item) => item !== entityId)
       return { ...prev, enabledEntities, entityOrder }
     })
   }
 
-  const reorderEntity = (fromId: string, targetId: string) => {
+  const reorderEnabledEntity = (fromId: string, targetId: string) => {
     if (!fromId || !targetId || fromId === targetId) return
     setSettings((prev) => {
       const order = [...prev.entityOrder]
       const from = order.indexOf(fromId)
-      const to   = order.indexOf(targetId)
+      const to = order.indexOf(targetId)
       if (from < 0 || to < 0) return prev
       order.splice(from, 1)
       order.splice(to, 0, fromId)
@@ -288,268 +498,369 @@ export function App() {
     })
   }
 
-  const setNameOverride = (id: string, v: string) =>
-    setSettings((p) => ({ ...p, nameOverrides: { ...p.nameOverrides, [id]: v } }))
-  const setCategory = (id: string, v: string) =>
-    setSettings((p) => ({ ...p, categoryMap: { ...p.categoryMap, [id]: v } }))
-  const setCardWidth = (id: string, v: 'single' | 'double') =>
-    setSettings((p) => ({ ...p, cardWidths: { ...p.cardWidths, [id]: v } }))
-  const setShowIcon = (id: string, v: boolean) =>
-    setSettings((p) => ({ ...p, showIcons: { ...p.showIcons, [id]: v } }))
-
   const addCategory = () => {
-    const cat = newCategory.trim()
-    if (!cat) return
-    setSettings((p) => ({
-      ...p,
-      customCategories: p.customCategories.includes(cat) ? p.customCategories : [...p.customCategories, cat],
+    const category = newCategory.trim()
+    if (!category) return
+    setSettings((prev) => ({
+      ...prev,
+      customCategories: prev.customCategories.includes(category)
+        ? prev.customCategories
+        : [...prev.customCategories, category],
     }))
     setNewCategory('')
   }
 
-  const removeCategory = (cat: string) =>
-    setSettings((p) => ({ ...p, customCategories: p.customCategories.filter((c) => c !== cat) }))
-
-  const addScene = () =>
-    setSettings((p) => ({ ...p, sceneButtons: [...p.sceneButtons, { id: '', label: '' }] }))
-
-  const updateScene = (i: number, key: keyof SceneButton, v: string) =>
-    setSettings((p) => {
-      const next = [...p.sceneButtons]; next[i] = { ...next[i], [key]: v }
-      return { ...p, sceneButtons: next }
-    })
-
-  const removeScene = (i: number) =>
-    setSettings((p) => ({ ...p, sceneButtons: p.sceneButtons.filter((_, j) => j !== i) }))
-
-  const addActionTile = () =>
-    setSettings((p) => ({
-      ...p, actionTiles: [...p.actionTiles, { id: '', label: '', actionType: 'url', target: '' }],
+  const removeCategory = (category: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      customCategories: prev.customCategories.filter((item) => item !== category),
     }))
+  }
 
-  const updateActionTile = (i: number, key: keyof ActionTile, v: string) =>
-    setSettings((p) => {
-      const next = [...p.actionTiles]; next[i] = { ...next[i], [key]: v }
-      return { ...p, actionTiles: next }
+  const addScene = () => {
+    setSettings((prev) => ({ ...prev, sceneButtons: [...prev.sceneButtons, { id: '', label: '' }] }))
+  }
+
+  const updateScene = (index: number, key: keyof SceneButton, value: string) => {
+    setSettings((prev) => {
+      const next = [...prev.sceneButtons]
+      next[index] = { ...next[index], [key]: value }
+      return { ...prev, sceneButtons: next }
     })
+  }
 
-  const removeActionTile = (i: number) =>
-    setSettings((p) => ({ ...p, actionTiles: p.actionTiles.filter((_, j) => j !== i) }))
+  const removeScene = (index: number) => {
+    setSettings((prev) => ({ ...prev, sceneButtons: prev.sceneButtons.filter((_, i) => i !== index) }))
+  }
+
+  const addActionTile = () => {
+    setSettings((prev) => ({
+      ...prev,
+      actionTiles: [...prev.actionTiles, { id: '', label: '', actionType: 'url', target: '' }],
+    }))
+  }
+
+  const updateActionTile = (index: number, key: keyof ActionTile, value: string) => {
+    setSettings((prev) => {
+      const next = [...prev.actionTiles]
+      next[index] = { ...next[index], [key]: value }
+      return { ...prev, actionTiles: next }
+    })
+  }
+
+  const removeActionTile = (index: number) => {
+    setSettings((prev) => ({ ...prev, actionTiles: prev.actionTiles.filter((_, i) => i !== index) }))
+  }
 
   const addProfile = () => {
     const key = newProfileKey.trim()
     if (!key || settings.profiles[key]) return
-    const profile: ProfileConfig = { label: key, hiddenEntities: [], categoryMap: {}, nameOverrides: {}, actionTileIds: [] }
-    setSettings((p) => ({ ...p, profiles: { ...p.profiles, [key]: profile } }))
+    const profile: ProfileConfig = {
+      label: key,
+      hiddenEntities: [],
+      categoryMap: {},
+      nameOverrides: {},
+      actionTileIds: [],
+    }
+    setSettings((prev) => ({ ...prev, profiles: { ...prev.profiles, [key]: profile } }))
     setNewProfileKey('')
   }
 
-  const updateProfileLabel = (key: string, v: string) =>
-    setSettings((p) => ({ ...p, profiles: { ...p.profiles, [key]: { ...p.profiles[key], label: v } } }))
-
-  const updateProfileHidden = (key: string, v: string) => {
-    const hidden = v.split(',').map((s) => s.trim()).filter(Boolean)
-    setSettings((p) => ({ ...p, profiles: { ...p.profiles, [key]: { ...p.profiles[key], hiddenEntities: hidden } } }))
+  const updateProfileLabel = (key: string, value: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      profiles: { ...prev.profiles, [key]: { ...prev.profiles[key], label: value } },
+    }))
   }
 
-  const removeProfile = (key: string) =>
-    setSettings((p) => { const next = { ...p.profiles }; delete next[key]; return { ...p, profiles: next } })
+  const updateProfileHiddenEntities = (key: string, value: string) => {
+    const hidden = value.split(',').map((item) => item.trim()).filter(Boolean)
+    setSettings((prev) => ({
+      ...prev,
+      profiles: { ...prev.profiles, [key]: { ...prev.profiles[key], hiddenEntities: hidden } },
+    }))
+  }
+
+  const removeProfile = (key: string) => {
+    setSettings((prev) => {
+      const next = { ...prev.profiles }
+      delete next[key]
+      return { ...prev, profiles: next }
+    })
+  }
 
   const saveSettings = async () => {
-    setStatusText('Saving…')
+    setStatusText('Saving settings...')
     try {
       await api('/api/settings', { method: 'PUT', body: JSON.stringify(settings) })
-      setStatusText('Saved')
+      setStatusText('Settings saved')
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : 'Save failed')
     }
   }
 
   const saveRuntime = async () => {
-    setStatusText('Saving runtime…')
+    setStatusText('Saving runtime config...')
     try {
       await api('/api/runtime-config', { method: 'PUT', body: JSON.stringify(runtime) })
-      setStatusText('Runtime saved')
+      setStatusText('Runtime config saved')
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : 'Runtime save failed')
     }
   }
 
-  // ── Entity controls ───────────────────────────────────────────────────────
+  const unlockAdmin = async () => {
+    const entered = adminPassword.trim()
+    if (!entered) return
+    const expectedHash = settings.passwordHash || ADMIN_DEFAULT_HASH
+    const hashed = await sha256(entered)
+    if (hashed === expectedHash) {
+      setAdminUnlocked(true)
+      setStatusText('Admin unlocked')
+    } else {
+      setStatusText('Invalid password')
+      setAdminUnlocked(false)
+    }
+    setAdminPassword('')
+  }
+
+  const headerValue = (entityId: string) => {
+    const entity = entityMap.get(entityId)
+    if (!entity) return '--'
+    const unit = entity.attributes.unit_of_measurement
+    if (typeof unit === 'string' && unit) return `${entity.state}${unit}`
+    return displayState(entity)
+  }
+
+  const renderHeader = () => {
+    const tempId = settings.headerEntities.temperatureEntityId
+    const humidityId = settings.headerEntities.humidityEntityId
+    const doorId = settings.headerEntities.doorContactEntityId
+    const actionId = settings.headerEntities.doorActionEntityId
+
+    if (!tempId && !humidityId && !doorId && !actionId) return null
+
+    return (
+      <section className="header-strip panel">
+        {tempId ? <div className="header-chip">Temp: {headerValue(tempId)}</div> : null}
+        {humidityId ? <div className="header-chip">Humidity: {headerValue(humidityId)}</div> : null}
+        {doorId ? <div className="header-chip">Door: {headerValue(doorId)}</div> : null}
+        {actionId ? (
+          <button
+            className="header-chip header-chip--action"
+            onClick={() => {
+              const entity = entityMap.get(actionId)
+              if (!entity) return
+              onCardToggle(entity)
+            }}
+          >
+            Door action
+          </button>
+        ) : null}
+      </section>
+    )
+  }
+
   const renderEntityControls = (entity: HaEntity) => {
-    const domain   = getDomain(entity.entity_id)
-    const isOff    = entity.state === 'off' || entity.state === 'unavailable'
-    const entityId = entity.entity_id
+    const domain = getDomain(entity.entity_id)
+    const isOff = entity.state === 'off' || entity.state === 'unavailable'
 
     if (domain === 'light') {
-      const supportedModes  = (entity.attributes.supported_color_modes as string[] | undefined) ?? []
-      const onlyOnOff       = supportedModes.length === 0 || (supportedModes.length === 1 && supportedModes[0] === 'onoff')
-      const supportsBright  = !onlyOnOff
-      const supportsColor   = supportedModes.some((m) => LIGHT_COLOR_MODES.has(m))
-      const supportsCT      = supportedModes.some((m) => LIGHT_COLOR_TEMP_MODES.has(m))
+      const supportedModes = (entity.attributes.supported_color_modes as string[] | undefined) ?? []
+      const onlyOnOff = supportedModes.length === 0 || (supportedModes.length === 1 && supportedModes[0] === 'onoff')
+      const supportsBrightness = !onlyOnOff
+      const supportsColor = supportedModes.some((m) => LIGHT_COLOR_MODES.has(m))
+      const supportsColorTemp = supportedModes.some((m) => LIGHT_COLOR_TEMP_MODES.has(m))
 
-      const brightness = toNum(entity.attributes.brightness, 180)
-      const color      = rgbToHex(entity.attributes.rgb_color)
-      const kelvin     = toNum(entity.attributes.color_temp_kelvin, 3500)
-      const minKelvin  = toNum(entity.attributes.min_color_temp_kelvin, 2000)
-      const maxKelvin  = toNum(entity.attributes.max_color_temp_kelvin, 6500)
+      const memory = lightMemory[entity.entity_id] ?? {}
+      const brightnessValue = entity.attributes.brightness !== undefined
+        ? toNum(entity.attributes.brightness, 1)
+        : memory.brightness
+      const colorValue = rgbToHex(entity.attributes.rgb_color) ?? memory.color
+      const kelvinValue = entity.attributes.color_temp_kelvin !== undefined
+        ? toNum(entity.attributes.color_temp_kelvin, 2700)
+        : memory.kelvin
+      const minKelvin = toNum(entity.attributes.min_color_temp_kelvin, 2000)
+      const maxKelvin = toNum(entity.attributes.max_color_temp_kelvin, 6500)
 
       return (
-        <div className="controls-stack">
-          <button
-            className={`toggle-btn${isOff ? '' : ' toggle-btn--on'}`}
-            onClick={() => void callService('light', isOff ? 'turn_on' : 'turn_off', { entity_id: entityId })}
-          >
-            {isOff ? 'Turn on' : 'Turn off'}
-          </button>
-
-          {supportsBright && (
+        <div className="controls-stack" onClick={(event) => event.stopPropagation()}>
+          {supportsBrightness ? (
             <label className={`ctrl-label${isOff ? ' ctrl-label--off' : ''}`}>
               Brightness
               <input
-                type="range" min="1" max="255" step="1" value={brightness}
+                type="range"
+                min="1"
+                max="255"
+                step="1"
+                value={brightnessValue ?? 1}
                 disabled={isOff}
-                onChange={(e)  => previewAttr(entityId, { brightness: Number(e.target.value) })}
-                onPointerUp={(e) => void callService('light', 'turn_on', {
-                  entity_id: entityId, brightness: Number((e.target as HTMLInputElement).value),
-                })}
+                onChange={(event) => previewAttr(entity.entity_id, { brightness: Number(event.target.value) })}
+                onPointerUp={(event) =>
+                  void callService('light', 'turn_on', {
+                    entity_id: entity.entity_id,
+                    brightness: Number((event.target as HTMLInputElement).value),
+                  })
+                }
               />
             </label>
-          )}
+          ) : null}
 
-          {supportsColor && (
+          {supportsColor ? (
             <label className={`ctrl-label${isOff ? ' ctrl-label--off' : ''}`}>
               Color
               <input
-                type="color" value={color}
+                type="color"
+                value={colorValue ?? '#000000'}
                 disabled={isOff}
-                onChange={(e) => void callService('light', 'turn_on', {
-                  entity_id: entityId, rgb_color: hexToRgb(e.target.value),
-                })}
+                onChange={(event) =>
+                  void callService('light', 'turn_on', {
+                    entity_id: entity.entity_id,
+                    rgb_color: hexToRgb(event.target.value),
+                  })
+                }
               />
             </label>
-          )}
+          ) : null}
 
-          {supportsCT && (
+          {supportsColorTemp ? (
             <label className={`ctrl-label${isOff ? ' ctrl-label--off' : ''}`}>
               Color temp (K)
               <input
-                type="range" min={minKelvin} max={maxKelvin} step="50" value={kelvin}
+                type="range"
+                min={minKelvin}
+                max={maxKelvin}
+                step="50"
+                value={kelvinValue ?? minKelvin}
                 disabled={isOff}
-                onChange={(e)  => previewAttr(entityId, { color_temp_kelvin: Number(e.target.value) })}
-                onPointerUp={(e) => void callService('light', 'turn_on', {
-                  entity_id: entityId, color_temp_kelvin: Number((e.target as HTMLInputElement).value),
-                })}
+                onChange={(event) => previewAttr(entity.entity_id, { color_temp_kelvin: Number(event.target.value) })}
+                onPointerUp={(event) =>
+                  void callService('light', 'turn_on', {
+                    entity_id: entity.entity_id,
+                    color_temp_kelvin: Number((event.target as HTMLInputElement).value),
+                  })
+                }
               />
             </label>
-          )}
+          ) : null}
         </div>
       )
     }
 
-    if (domain === 'switch') {
-      return (
-        <button
-          className={`toggle-btn${isOff ? '' : ' toggle-btn--on'}`}
-          onClick={() => void callService('switch', isOff ? 'turn_on' : 'turn_off', { entity_id: entityId })}
-        >
-          {isOff ? 'Turn on' : 'Turn off'}
-        </button>
-      )
-    }
-
     if (domain === 'climate') {
-      const modes       = Array.isArray(entity.attributes.hvac_modes) ? (entity.attributes.hvac_modes as string[]) : ['off', 'heat', 'cool', 'auto']
+      const temperature = toNum(entity.attributes.temperature, 22)
+      const min = toNum(entity.attributes.min_temp, 16)
+      const max = toNum(entity.attributes.max_temp, 30)
+      const modes = Array.isArray(entity.attributes.hvac_modes)
+        ? (entity.attributes.hvac_modes as string[])
+        : ['off', 'heat', 'cool', 'auto']
       const currentMode = String(entity.attributes.hvac_mode ?? entity.state)
-      const climateOff  = currentMode === 'off'
+      const climateOff = currentMode === 'off'
       const supportsTemp = entity.attributes.min_temp !== undefined
-      const temperature  = toNum(entity.attributes.temperature, 22)
-      const minTemp      = toNum(entity.attributes.min_temp, 16)
-      const maxTemp      = toNum(entity.attributes.max_temp, 30)
 
       return (
-        <div className="controls-stack">
+        <div className="controls-stack" onClick={(event) => event.stopPropagation()}>
           <label className="ctrl-label">
             Mode
             <select
               value={currentMode}
-              onChange={(e) => void callService('climate', 'set_hvac_mode', { entity_id: entityId, hvac_mode: e.target.value })}
+              onChange={(event) =>
+                void callService('climate', 'set_hvac_mode', {
+                  entity_id: entity.entity_id,
+                  hvac_mode: event.target.value,
+                })
+              }
             >
-              {modes.map((m) => <option key={m} value={m}>{m}</option>)}
+              {modes.map((mode) => (
+                <option key={mode} value={mode}>{mode}</option>
+              ))}
             </select>
           </label>
-          {supportsTemp && (
+          {supportsTemp ? (
             <label className={`ctrl-label${climateOff ? ' ctrl-label--off' : ''}`}>
-              {temperature.toFixed(1)}°
+              {temperature.toFixed(1)}
               <input
-                type="range" min={minTemp} max={maxTemp} step="0.5" value={temperature}
+                type="range"
+                min={min}
+                max={max}
+                step="0.5"
+                value={temperature}
                 disabled={climateOff}
-                onChange={(e)  => previewAttr(entityId, { temperature: Number(e.target.value) })}
-                onPointerUp={(e) => void callService('climate', 'set_temperature', {
-                  entity_id: entityId, temperature: Number((e.target as HTMLInputElement).value),
-                })}
+                onChange={(event) => previewAttr(entity.entity_id, { temperature: Number(event.target.value) })}
+                onPointerUp={(event) =>
+                  void callService('climate', 'set_temperature', {
+                    entity_id: entity.entity_id,
+                    temperature: Number((event.target as HTMLInputElement).value),
+                  })
+                }
               />
             </label>
-          )}
+          ) : null}
         </div>
       )
     }
 
     if (domain === 'cover') {
       return (
-        <div className="inline-controls">
-          <button onClick={() => void callService('cover', 'open_cover',  { entity_id: entityId })}>Open</button>
-          <button onClick={() => void callService('cover', 'stop_cover',  { entity_id: entityId })}>Stop</button>
-          <button onClick={() => void callService('cover', 'close_cover', { entity_id: entityId })}>Close</button>
+        <div className="inline-controls" onClick={(event) => event.stopPropagation()}>
+          <button onClick={() => void callService('cover', 'open_cover', { entity_id: entity.entity_id })}>Open</button>
+          <button onClick={() => void callService('cover', 'stop_cover', { entity_id: entity.entity_id })}>Stop</button>
+          <button onClick={() => void callService('cover', 'close_cover', { entity_id: entity.entity_id })}>Close</button>
         </div>
-      )
-    }
-
-    if (domain === 'lock') {
-      const isLocked = entity.state === 'locked'
-      return (
-        <button
-          className={`toggle-btn${isLocked ? ' toggle-btn--on' : ''}`}
-          onClick={() => void callService('lock', isLocked ? 'unlock' : 'lock', { entity_id: entityId })}
-        >
-          {isLocked ? 'Unlock' : 'Lock'}
-        </button>
       )
     }
 
     if (domain === 'fan') {
-      const percent      = toNum(entity.attributes.percentage, 50)
+      const percent = toNum(entity.attributes.percentage, 50)
       const supportsSpeed = entity.attributes.percentage !== undefined || entity.attributes.percentage_step !== undefined
+      return supportsSpeed ? (
+        <div className="controls-stack" onClick={(event) => event.stopPropagation()}>
+          <label className={`ctrl-label${isOff ? ' ctrl-label--off' : ''}`}>
+            Speed {percent}%
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={percent}
+              disabled={isOff}
+              onChange={(event) => previewAttr(entity.entity_id, { percentage: Number(event.target.value) })}
+              onPointerUp={(event) =>
+                void callService('fan', 'set_percentage', {
+                  entity_id: entity.entity_id,
+                  percentage: Number((event.target as HTMLInputElement).value),
+                })
+              }
+            />
+          </label>
+        </div>
+      ) : null
+    }
+
+    return <p className="entity-state">{displayState(entity)}</p>
+  }
+
+  const renderTitle = (entity: HaEntity) => {
+    const mode = settings.titleModes[entity.entity_id] ?? (settings.showIcons[entity.entity_id] ? 'name_icon' : 'name')
+    const iconClass = iconClassFromEntity(entity)
+    const name = String(settings.nameOverrides[entity.entity_id] ?? getFriendlyName(entity))
+
+    if (mode === 'icon') {
+      return <i className={`${iconClass} card-icon`} title={name} />
+    }
+    if (mode === 'name_icon') {
       return (
-        <div className="controls-stack">
-          <button
-            className={`toggle-btn${isOff ? '' : ' toggle-btn--on'}`}
-            onClick={() => void callService('fan', isOff ? 'turn_on' : 'turn_off', { entity_id: entityId })}
-          >
-            {isOff ? 'Turn on' : 'Turn off'}
-          </button>
-          {supportsSpeed && (
-            <label className={`ctrl-label${isOff ? ' ctrl-label--off' : ''}`}>
-              Speed {percent}%
-              <input
-                type="range" min="0" max="100" step="5" value={percent}
-                disabled={isOff}
-                onChange={(e)  => previewAttr(entityId, { percentage: Number(e.target.value) })}
-                onPointerUp={(e) => void callService('fan', 'set_percentage', {
-                  entity_id: entityId, percentage: Number((e.target as HTMLInputElement).value),
-                })}
-              />
-            </label>
-          )}
+        <div className="card-title-wrap">
+          <i className={`${iconClass} card-icon`} />
+          <h3>{name}</h3>
         </div>
       )
     }
-
-    // Generic — just show state
-    return <p className="entity-state">{entity.state}</p>
+    return <h3>{name}</h3>
   }
 
-  // ── JSX ───────────────────────────────────────────────────────────────────
+  const adminRequested = selectedCategory === ADMIN_CATEGORY_ID
+
   return (
     <div className="app">
       <header className="hero">
@@ -558,253 +869,311 @@ export function App() {
           <p>{settings.globalSettings.subtitle || 'Control center'}</p>
           <small className="status">{statusText}</small>
         </div>
-        <div className="hero-actions">
-          <button onClick={() => { setManageMode((v) => !v); setSelectedCategory(null) }}>
-            {manageMode ? 'Dashboard' : 'Manage'}
-          </button>
-          <button onClick={() => void loadAll()}>Refresh</button>
-          <button onClick={() => void saveSettings()}>Save</button>
-        </div>
       </header>
 
-      {manageMode ? (
-        /* ══════════════════════════════════════════════════════════ MANAGE */
-        <main className="manage">
-          <div className="manage-toolbar">
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search entities" />
-            <input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} placeholder="Admin token" />
-            <span>{entities.length} total</span>
-          </div>
+      {renderHeader()}
 
-          <nav className="tabbar">
-            {tabs.map((tab) => (
-              <button key={tab} className={manageTab === tab ? 'tab tab--active' : 'tab'} onClick={() => setManageTab(tab)}>
-                {tab}
-              </button>
-            ))}
-          </nav>
-
-          {manageTab === 'entities' && (
-            <section className="panel">
-              <div className="split-grid">
-                <div>
-                  <h3>All entities ({allFiltered.length})</h3>
-                  <div className="entity-list">
-                    {allFiltered.map((entity) => (
-                      <div key={entity.entity_id} className="entity-row entity-row--editor">
-                        <label className="toggle-line">
-                          <input
-                            type="checkbox"
-                            checked={settings.enabledEntities.includes(entity.entity_id)}
-                            onChange={(e) => toggleEntity(entity.entity_id, e.target.checked)}
-                          />
-                          <span>{entity.entity_id}</span>
-                        </label>
-                        <input
-                          value={settings.nameOverrides[entity.entity_id] ?? ''}
-                          onChange={(e) => setNameOverride(entity.entity_id, e.target.value)}
-                          placeholder={getFriendlyName(entity)}
-                        />
-                        <input
-                          value={settings.categoryMap[entity.entity_id] ?? ''}
-                          onChange={(e) => setCategory(entity.entity_id, e.target.value)}
-                          placeholder="Category"
-                          list="categories"
-                        />
-                        <div className="inline-controls">
-                          <select
-                            value={settings.cardWidths[entity.entity_id] ?? 'single'}
-                            onChange={(e) => setCardWidth(entity.entity_id, e.target.value as 'single' | 'double')}
-                          >
-                            <option value="single">Single</option>
-                            <option value="double">Double</option>
-                          </select>
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={settings.showIcons[entity.entity_id] !== false}
-                              onChange={(e) => setShowIcon(entity.entity_id, e.target.checked)}
-                            />
-                            Icon
-                          </label>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <datalist id="categories">
-                    {settings.customCategories.map((c) => <option key={c} value={c} />)}
-                  </datalist>
-                </div>
-
-                <div>
-                  <h3>Enabled order (drag)</h3>
-                  <div className="entity-list">
-                    {enabledOrder.map((id) => (
-                      <div
-                        key={id}
-                        className="entity-row"
-                        draggable
-                        onDragStart={() => setDragEntityId(id)}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={() => reorderEntity(dragEntityId, id)}
-                      >
-                        <strong>{settings.nameOverrides[id] ?? id}</strong>
-                        <small>{id}</small>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {manageTab === 'categories' && (
-            <section className="panel">
-              <h3>Custom categories</h3>
-              <div className="manage-toolbar">
-                <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="New category" />
-                <button onClick={addCategory}>Add</button>
-              </div>
-              <div className="chip-wrap">
-                {settings.customCategories.map((cat) => (
-                  <button key={cat} className="chip" onClick={() => removeCategory(cat)}>{cat} ×</button>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {manageTab === 'scenes' && (
-            <section className="panel">
-              <h3>Scene buttons</h3>
-              <button onClick={addScene}>Add scene</button>
-              {settings.sceneButtons.map((scene, i) => (
-                <div key={`${scene.id}-${i}`} className="row-form">
-                  <input value={scene.id}    onChange={(e) => updateScene(i, 'id',    e.target.value)} placeholder="automation.id" />
-                  <input value={scene.label} onChange={(e) => updateScene(i, 'label', e.target.value)} placeholder="Label" />
-                  <button onClick={() => removeScene(i)}>Remove</button>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {manageTab === 'actions' && (
-            <section className="panel">
-              <h3>Action tiles</h3>
-              <button onClick={addActionTile}>Add action</button>
-              {settings.actionTiles.map((tile, i) => (
-                <div key={`${tile.id}-${i}`} className="row-form">
-                  <input value={tile.id}     onChange={(e) => updateActionTile(i, 'id',     e.target.value)} placeholder="id" />
-                  <input value={tile.label}  onChange={(e) => updateActionTile(i, 'label',  e.target.value)} placeholder="Label" />
-                  <select value={tile.actionType} onChange={(e) => updateActionTile(i, 'actionType', e.target.value)}>
-                    <option value="url">url</option>
-                    <option value="app">app</option>
-                    <option value="route">route</option>
-                  </select>
-                  <input value={tile.target} onChange={(e) => updateActionTile(i, 'target', e.target.value)} placeholder="Target" />
-                  <button onClick={() => removeActionTile(i)}>Remove</button>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {manageTab === 'profiles' && (
-            <section className="panel">
-              <h3>Profiles</h3>
-              <div className="manage-toolbar">
-                <input value={newProfileKey} onChange={(e) => setNewProfileKey(e.target.value)} placeholder="Profile key" />
-                <button onClick={addProfile}>Add</button>
-              </div>
-              {Object.entries(settings.profiles).map(([key, profile]) => (
-                <div key={key} className="row-form row-form--stack">
-                  <strong>{key}</strong>
-                  <input value={profile.label} onChange={(e) => updateProfileLabel(key, e.target.value)} placeholder="Label" />
-                  <textarea
-                    value={profile.hiddenEntities.join(', ')}
-                    onChange={(e) => updateProfileHidden(key, e.target.value)}
-                    placeholder="Hidden entities (comma-separated)"
-                  />
-                  <button onClick={() => removeProfile(key)}>Remove</button>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {manageTab === 'header' && (
-            <section className="panel">
-              <h3>Header entities</h3>
-              <div className="row-form row-form--stack">
-                {(['temperatureEntityId', 'humidityEntityId', 'doorContactEntityId', 'doorActionEntityId'] as const).map((key) => (
-                  <label key={key}>
-                    {key}
-                    <select
-                      value={settings.headerEntities[key]}
-                      onChange={(e) =>
-                        setSettings((p) => ({ ...p, headerEntities: { ...p.headerEntities, [key]: e.target.value } }))
-                      }
-                    >
-                      <option value="">None</option>
-                      {entities.map((e) => <option key={e.entity_id} value={e.entity_id}>{e.entity_id}</option>)}
-                    </select>
-                  </label>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {manageTab === 'runtime' && (
-            <section className="panel">
-              <h3>Runtime configuration</h3>
-              <div className="row-form row-form--stack">
-                <input
-                  value={runtime.haUrl}
-                  onChange={(e) => setRuntime((p) => ({ ...p, haUrl: e.target.value }))}
-                  placeholder="http://homeassistant.local:8123"
-                />
-                <textarea
-                  value={runtime.haToken}
-                  onChange={(e) => setRuntime((p) => ({ ...p, haToken: e.target.value }))}
-                  placeholder="Long-lived access token"
-                />
-                <button onClick={() => void saveRuntime()}>Save runtime config</button>
-              </div>
-            </section>
-          )}
-        </main>
-      ) : (
-        /* ══════════════════════════════════════════════════════════ DASHBOARD */
+      {!adminRequested ? (
         <main className="dashboard">
           {selectedCategory === null ? (
-            /* Category grid */
             <div className="category-grid">
-              {categories.map((cat) => {
-                const count = entitiesByCategory.get(cat)?.length ?? 0
+              {categories.map((category) => {
+                const count = entitiesByCategory.get(category)?.length ?? 0
                 return (
-                  <button key={cat} className="category-btn" onClick={() => setSelectedCategory(cat)}>
-                    <span className="category-btn__name">{cat}</span>
+                  <button key={category} className="category-btn" onClick={() => setSelectedCategory(category)}>
+                    <span className="category-btn__name">{category}</span>
                     <span className="category-btn__count">{count}</span>
                   </button>
                 )
               })}
+              <button className="category-btn category-btn--admin" onClick={() => setSelectedCategory(ADMIN_CATEGORY_ID)}>
+                <span className="category-btn__name">Admin</span>
+                <span className="category-btn__count">Protected</span>
+              </button>
             </div>
           ) : (
-            /* Entity list for selected category */
             <>
               <div className="cat-nav">
-                <button className="back-btn" onClick={() => setSelectedCategory(null)}>← Back</button>
+                <button className="back-btn" onClick={() => setSelectedCategory(null)}>Back</button>
                 <h2 className="cat-heading">{selectedCategory}</h2>
               </div>
               <div className="grid">
                 {(entitiesByCategory.get(selectedCategory) ?? []).map((entity) => (
                   <article
                     key={entity.entity_id}
-                    className={`card${settings.cardWidths[entity.entity_id] === 'double' ? ' card--double' : ''}`}
+                    className={`card${settings.cardWidths[entity.entity_id] === 'double' ? ' card--double' : ''}${isOnState(entity) ? ' card--active' : ''}${canCardToggle(entity) ? ' card--toggleable' : ''}`}
+                    onClick={() => onCardToggle(entity)}
                   >
-                    <h3>{String(settings.nameOverrides[entity.entity_id] ?? getFriendlyName(entity))}</h3>
-                    <small className="entity-id">{entity.entity_id}</small>
+                    {renderTitle(entity)}
+                    <p className="state-pill">{displayState(entity)}</p>
                     {renderEntityControls(entity)}
                   </article>
                 ))}
               </div>
+            </>
+          )}
+        </main>
+      ) : (
+        <main className="manage">
+          {!adminUnlocked ? (
+            <section className="panel">
+              <h3>Admin unlock</h3>
+              <p>Default password is admin if no custom password is set in Home Assistant options.</p>
+              <div className="row-form row-form--stack">
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(event) => setAdminPassword(event.target.value)}
+                  placeholder="Enter admin password"
+                />
+                <div className="inline-controls">
+                  <button onClick={() => void unlockAdmin()}>Unlock</button>
+                  <button onClick={() => setSelectedCategory(null)}>Back</button>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <>
+              <div className="manage-toolbar">
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search entities" />
+                <input value={adminToken} onChange={(event) => setAdminToken(event.target.value)} placeholder="Admin token (optional)" />
+                <button onClick={() => void saveSettings()}>Save settings</button>
+                <button onClick={() => void loadAll()}>Refresh</button>
+                <button onClick={() => setSelectedCategory(null)}>Exit admin</button>
+              </div>
+
+              <nav className="tabbar">
+                {tabs.map((tab) => (
+                  <button key={tab} className={manageTab === tab ? 'tab tab--active' : 'tab'} onClick={() => setManageTab(tab)}>
+                    {tab}
+                  </button>
+                ))}
+              </nav>
+
+              {manageTab === 'entities' ? (
+                <section className="panel">
+                  <div className="split-grid">
+                    <div>
+                      <h3>All entities</h3>
+                      <div className="entity-list">
+                        {allFiltered.map((entity) => (
+                          <div key={entity.entity_id} className="entity-row entity-row--editor">
+                            <label className="toggle-line">
+                              <input
+                                type="checkbox"
+                                checked={settings.enabledEntities.includes(entity.entity_id)}
+                                onChange={(event) => toggleEntity(entity.entity_id, event.target.checked)}
+                              />
+                              <span>{entity.entity_id}</span>
+                            </label>
+                            <input
+                              value={settings.nameOverrides[entity.entity_id] ?? ''}
+                              onChange={(event) => setNameOverride(entity.entity_id, event.target.value)}
+                              placeholder={getFriendlyName(entity)}
+                            />
+                            <select
+                              value={settings.categoryMap[entity.entity_id] ?? getDefaultCategory(entity)}
+                              onChange={(event) => setCategory(entity.entity_id, event.target.value)}
+                            >
+                              {categoryOptions.map((category) => (
+                                <option key={category} value={category}>{category}</option>
+                              ))}
+                            </select>
+                            <div className="inline-controls">
+                              <select
+                                value={settings.cardWidths[entity.entity_id] ?? 'single'}
+                                onChange={(event) => setCardWidth(entity.entity_id, event.target.value as 'single' | 'double')}
+                              >
+                                <option value="single">Single</option>
+                                <option value="double">Double</option>
+                              </select>
+                              <select
+                                value={settings.titleModes[entity.entity_id] ?? (settings.showIcons[entity.entity_id] ? 'name_icon' : 'name')}
+                                onChange={(event) => setTitleMode(entity.entity_id, event.target.value as 'name' | 'name_icon' | 'icon')}
+                              >
+                                <option value="name">Name only</option>
+                                <option value="name_icon">Icon and name</option>
+                                <option value="icon">Icon only</option>
+                              </select>
+                            </div>
+                            <div className="inline-controls">
+                              <input
+                                value={getStateLabels(entity.entity_id).on}
+                                onChange={(event) => setStateLabel(entity.entity_id, 'on', event.target.value)}
+                                placeholder="On label"
+                              />
+                              <input
+                                value={getStateLabels(entity.entity_id).off}
+                                onChange={(event) => setStateLabel(entity.entity_id, 'off', event.target.value)}
+                                placeholder="Off label"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3>Enabled order (drag and drop)</h3>
+                      <div className="entity-list">
+                        {enabledOrder.map((entityId) => (
+                          <div
+                            key={entityId}
+                            className="entity-row"
+                            draggable
+                            onDragStart={() => setDragEntityId(entityId)}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={() => reorderEnabledEntity(dragEntityId, entityId)}
+                          >
+                            <strong>{settings.nameOverrides[entityId] ?? entityId}</strong>
+                            <small>{entityId}</small>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+
+              {manageTab === 'categories' ? (
+                <section className="panel">
+                  <h3>Custom categories</h3>
+                  <div className="manage-toolbar">
+                    <input value={newCategory} onChange={(event) => setNewCategory(event.target.value)} placeholder="New category" />
+                    <button onClick={addCategory}>Add category</button>
+                  </div>
+                  <div className="chip-wrap">
+                    {settings.customCategories.map((category) => (
+                      <button key={category} className="chip" onClick={() => removeCategory(category)}>
+                        {category} x
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {manageTab === 'scenes' ? (
+                <section className="panel">
+                  <h3>Scene buttons</h3>
+                  <button onClick={addScene}>Add scene</button>
+                  {settings.sceneButtons.map((scene, index) => {
+                    const searchText = sceneSearch[index] ?? ''
+                    const query = searchText.trim().toLowerCase()
+                    const filtered = automationEntities.filter((entity) => {
+                      if (!query) return true
+                      const label = getFriendlyName(entity)
+                      return `${entity.entity_id} ${label}`.toLowerCase().includes(query)
+                    })
+                    return (
+                      <div key={`${scene.id}-${index}`} className="row-form row-form--stack">
+                        <input
+                          value={searchText}
+                          onChange={(event) => setSceneSearch((prev) => ({ ...prev, [index]: event.target.value }))}
+                          placeholder="Search automation"
+                        />
+                        <select value={scene.id} onChange={(event) => updateScene(index, 'id', event.target.value)}>
+                          <option value="">Select automation</option>
+                          {filtered.map((entity) => (
+                            <option key={entity.entity_id} value={entity.entity_id}>
+                              {getFriendlyName(entity)} ({entity.entity_id})
+                            </option>
+                          ))}
+                        </select>
+                        <input value={scene.label} onChange={(event) => updateScene(index, 'label', event.target.value)} placeholder="Button label" />
+                        <button onClick={() => removeScene(index)}>Remove</button>
+                      </div>
+                    )
+                  })}
+                </section>
+              ) : null}
+
+              {manageTab === 'actions' ? (
+                <section className="panel">
+                  <h3>Action tiles</h3>
+                  <button onClick={addActionTile}>Add action</button>
+                  {settings.actionTiles.map((tile, index) => (
+                    <div key={`${tile.id}-${index}`} className="row-form">
+                      <input value={tile.id} onChange={(event) => updateActionTile(index, 'id', event.target.value)} placeholder="tile id" />
+                      <input value={tile.label} onChange={(event) => updateActionTile(index, 'label', event.target.value)} placeholder="label" />
+                      <select value={tile.actionType} onChange={(event) => updateActionTile(index, 'actionType', event.target.value)}>
+                        <option value="url">url</option>
+                        <option value="app">app</option>
+                        <option value="route">route</option>
+                      </select>
+                      <input value={tile.target} onChange={(event) => updateActionTile(index, 'target', event.target.value)} placeholder="target" />
+                      <button onClick={() => removeActionTile(index)}>Remove</button>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+
+              {manageTab === 'profiles' ? (
+                <section className="panel">
+                  <h3>Profiles</h3>
+                  <div className="manage-toolbar">
+                    <input value={newProfileKey} onChange={(event) => setNewProfileKey(event.target.value)} placeholder="new profile key" />
+                    <button onClick={addProfile}>Add profile</button>
+                  </div>
+                  {Object.entries(settings.profiles).map(([key, profile]) => (
+                    <div key={key} className="row-form row-form--stack">
+                      <strong>{key}</strong>
+                      <input value={profile.label} onChange={(event) => updateProfileLabel(key, event.target.value)} placeholder="Profile label" />
+                      <textarea
+                        value={profile.hiddenEntities.join(', ')}
+                        onChange={(event) => updateProfileHiddenEntities(key, event.target.value)}
+                        placeholder="hidden entities (comma separated)"
+                      />
+                      <button onClick={() => removeProfile(key)}>Remove profile</button>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+
+              {manageTab === 'header' ? (
+                <section className="panel">
+                  <h3>Header entities</h3>
+                  <div className="row-form row-form--stack">
+                    {HEADER_KEYS.map((key) => {
+                      const filtered = entityChoices(headerSearch[key])
+                      return (
+                        <div key={key} className="row-form row-form--stack">
+                          <label>{key}</label>
+                          <input
+                            value={headerSearch[key]}
+                            onChange={(event) => setHeaderSearch((prev) => ({ ...prev, [key]: event.target.value }))}
+                            placeholder="Search entity"
+                          />
+                          <select
+                            value={settings.headerEntities[key]}
+                            onChange={(event) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                headerEntities: { ...prev.headerEntities, [key]: event.target.value },
+                              }))
+                            }
+                          >
+                            <option value="">None</option>
+                            {filtered.map((entity) => (
+                              <option key={entity.entity_id} value={entity.entity_id}>{getFriendlyName(entity)} ({entity.entity_id})</option>
+                            ))}
+                          </select>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+              ) : null}
+
+              {manageTab === 'runtime' ? (
+                <section className="panel">
+                  <h3>Runtime configuration</h3>
+                  <div className="row-form row-form--stack">
+                    <input value={runtime.haUrl} onChange={(event) => setRuntime((prev) => ({ ...prev, haUrl: event.target.value }))} placeholder="http://homeassistant.local:8123" />
+                    <textarea value={runtime.haToken} onChange={(event) => setRuntime((prev) => ({ ...prev, haToken: event.target.value }))} placeholder="Long-lived token" />
+                    <button onClick={() => void saveRuntime()}>Save runtime config</button>
+                  </div>
+                </section>
+              ) : null}
             </>
           )}
         </main>

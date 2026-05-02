@@ -1,0 +1,49 @@
+Studio Panel Task Status
+Updated: 2026-05-02
+
+1. Header entities are shown in dashboard
+Status: Done
+
+2. Scene button entity selection from available automations
+Status: Done
+
+3. HASS entity selectors sorted alphabetically and searchable
+Status: Done
+
+4. Password protection restored (Admin area)
+Status: Done
+Notes: Admin category is password-protected. If no configured password hash exists, default password is 'admin'.
+
+5. Category selection for entity display via dropdown
+Status: Done
+
+6. Light sliders/color when off use last known values (or deterministic empty fallback)
+Status: Done
+
+7. Light status stabilization after toggle (no immediate stale overwrite)
+Status: Done
+Notes: Optimistic update plus delayed entity refreshes.
+
+8. Toggle by clicking card instead of dedicated toggle button
+Status: Done
+Notes: Applied to light/switch/fan/lock/button domains.
+
+9. Icon display mode: name, icon+name, icon-only
+Status: Done
+
+10. Hide entity id in dashboard cards
+Status: Done
+
+11. Highlight whole card when entity is on
+Status: Done
+
+12. On/off label override support
+Status: Done
+Notes: Available for entity states rendered as on/off labels.
+
+13. Remove header Refresh/Save/entity-count UI
+Status: Done
+Notes: Management moved to Admin category. Save/refresh controls remain inside Admin.
+
+14. Larger card title typography
+Status: Done

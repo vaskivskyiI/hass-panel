@@ -40,6 +40,8 @@ export type Settings = {
   categoryMap: Record<string, string>
   cardWidths: Record<string, 'single' | 'double'>
   showIcons: Record<string, boolean>
+  titleModes: Record<string, 'name' | 'name_icon' | 'icon'>
+  stateLabels: Record<string, { on: string; off: string }>
   customCategories: string[]
   categoryPinHashes: Record<string, string>
   categoryTopText: Record<string, string>
