@@ -202,7 +202,6 @@ async def get_entities() -> list[dict[str, Any]]:
 async def call_service(
     domain: str, service: str, payload: dict[str, Any], request: Request
 ) -> dict[str, str]:
-    require_admin(request)
     runtime = read_json(RUNTIME_PATH, {"haUrl": "", "haToken": ""})
     ha_url = str(runtime.get("haUrl", "")).rstrip("/")
     token = str(runtime.get("haToken", ""))

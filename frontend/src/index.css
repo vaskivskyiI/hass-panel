@@ -225,6 +225,135 @@ textarea {
   color: var(--muted);
 }
 
+.dashboard {
+  margin-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+/* ── Category navigation grid ───────────────────────────────────────────── */
+.category-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.category-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 100px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 55%);
+  background: color-mix(in srgb, var(--accent), transparent 88%);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.category-btn:hover {
+  background: color-mix(in srgb, var(--accent), transparent 78%);
+  transform: translateY(-2px);
+}
+
+.category-btn:active {
+  transform: translateY(0);
+}
+
+.category-btn__name {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.category-btn__count {
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent), transparent 75%);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+/* ── Category entity view ────────────────────────────────────────────────── */
+.cat-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cat-heading {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.back-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+}
+
+.card--double {
+  grid-column: span 2;
+}
+
+.entity-id {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+
+.entity-state {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+.controls-stack {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.toggle-btn {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--muted), transparent 55%);
+  background: color-mix(in srgb, var(--muted), transparent 85%);
+  color: var(--text);
+  padding: 0.55rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toggle-btn--on {
+  border-color: color-mix(in srgb, var(--accent), transparent 40%);
+  background: color-mix(in srgb, var(--accent), transparent 72%);
+}
+
+.ctrl-label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.ctrl-label input[type='color'] {
+  height: 38px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.ctrl-label--off {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+.ctrl-label--off input {
+  cursor: not-allowed;
+}
+
 @media (max-width: 900px) {
   .split-grid {
     grid-template-columns: 1fr;

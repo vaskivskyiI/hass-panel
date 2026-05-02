@@ -9,5 +9,34 @@
     "abort": {
       "single_instance_allowed": "Only a single Studio Panel instance is allowed."
     }
+  },
+  "options": {
+    "step": {
+      "menu": {
+        "title": "Studio Panel Options",
+        "menu_options": {
+          "set_password": "Set panel password",
+          "clear_password": "Clear panel password",
+          "edit_settings": "Edit full settings",
+          "reset_settings": "Reset settings to defaults"
+        }
+      },
+      "set_password": {
+        "title": "Set Password",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "edit_settings": {
+        "title": "Edit Settings JSON",
+        "data": {
+          "settings_json": "Settings JSON"
+        }
+      }
+    },
+    "error": {
+      "password_too_short": "Password must be at least 4 characters",
+      "invalid_json": "Invalid JSON payload"
+    }
   }
 }

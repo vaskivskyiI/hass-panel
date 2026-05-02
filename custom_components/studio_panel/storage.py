@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -196,3 +197,16 @@ class SettingsStore:
         current = await self.async_load()
         current.update(_sanitize_settings(patch))
         return await self.async_save(current)
+
+    async def async_set_password(self, password: str) -> dict[str, Any]:
+        current = await self.async_load()
+        current["passwordHash"] = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        return await self.async_save(current)
+
+    async def async_clear_password(self) -> dict[str, Any]:
+        current = await self.async_load()
+        current["passwordHash"] = ""
+        return await self.async_save(current)
+
+    async def async_reset(self) -> dict[str, Any]:
+        return await self.async_save(deepcopy(DEFAULT_SETTINGS))
