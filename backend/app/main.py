@@ -26,6 +26,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "showIcons": {},
     "customCategories": [],
     "categoryPinHashes": {},
+    "categoryIcons": {},
+    "categoryDisplayModes": {},
+    "categoryParents": {},
     "categoryTopText": {},
     "categoryBottomText": {},
     "categoryTopEntities": {},
@@ -167,6 +170,23 @@ async def put_runtime_config(payload: RuntimeConfig, request: Request) -> dict[s
 @app.get("/api/settings")
 async def get_settings() -> dict[str, Any]:
     payload = read_json(SETTINGS_PATH, DEFAULT_SETTINGS)
+    # Overlay passwordHash from HA (source of truth when HA is reachable)
+    try:
+        runtime = read_json(RUNTIME_PATH, {"haUrl": "", "haToken": ""})
+        ha_url = str(runtime.get("haUrl", "")).rstrip("/")
+        token = str(runtime.get("haToken", ""))
+        if ha_url and token:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    f"{ha_url}/api/studio_panel/settings",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if resp.status_code == 200:
+                ha_data = resp.json()
+                if isinstance(ha_data, dict) and ha_data.get("passwordHash"):
+                    payload["passwordHash"] = ha_data["passwordHash"]
+    except Exception:  # noqa: BLE001
+        pass  # Fall back to local settings if HA is unreachable
     return with_request_id(payload, _request_id_ctx.get())
 
 

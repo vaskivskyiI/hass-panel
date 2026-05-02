@@ -44,6 +44,9 @@ export type Settings = {
   stateLabels: Record<string, { on: string; off: string }>
   customCategories: string[]
   categoryPinHashes: Record<string, string>
+  categoryIcons: Record<string, string>
+  categoryDisplayModes: Record<string, 'name' | 'icon' | 'name_icon'>
+  categoryParents: Record<string, string>
   categoryTopText: Record<string, string>
   categoryBottomText: Record<string, string>
   categoryTopEntities: Record<string, string[]>

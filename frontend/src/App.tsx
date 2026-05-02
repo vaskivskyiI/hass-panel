@@ -18,6 +18,9 @@ const defaultSettings: Settings = {
   stateLabels: {},
   customCategories: [],
   categoryPinHashes: {},
+  categoryIcons: {},
+  categoryDisplayModes: {},
+  categoryParents: {},
   categoryTopText: {},
   categoryBottomText: {},
   categoryTopEntities: {},
@@ -83,6 +86,9 @@ const normalizeSettings = (value: Partial<Settings>): Settings => ({
   actionTiles: value.actionTiles ?? [],
   titleModes: value.titleModes ?? {},
   stateLabels: value.stateLabels ?? {},
+  categoryIcons: value.categoryIcons ?? {},
+  categoryDisplayModes: value.categoryDisplayModes ?? {},
+  categoryParents: value.categoryParents ?? {},
 })
 
 const getDomain = (entityId: string) => entityId.split('.')[0] ?? ''
@@ -226,6 +232,13 @@ export function App() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [adminUnlocked, setAdminUnlocked] = useState(false)
   const [adminPassword, setAdminPassword] = useState('')
+  const [subCategory, setSubCategory] = useState<string | null>(null)
+  const [unlockedCategories, setUnlockedCategories] = useState<Set<string>>(new Set())
+  const [pendingCategory, setPendingCategory] = useState<string | null>(null)
+  const [categoryPinInput, setCategoryPinInput] = useState('')
+  const [categoryPinSetting, setCategoryPinSetting] = useState<Record<string, string>>({})
+  const [dragCategoryId, setDragCategoryId] = useState('')
+  const pendingUnlockCallback = useRef<(() => void) | null>(null)
   const [headerSearch, setHeaderSearch] = useState<Record<HeaderKey, string>>({
     temperatureEntityId: '',
     humidityEntityId: '',
@@ -281,6 +294,12 @@ export function App() {
   useEffect(() => {
     void loadAll()
   }, [])
+
+  useEffect(() => {
+    if (selectedCategory !== ADMIN_CATEGORY_ID) {
+      setAdminUnlocked(false)
+    }
+  }, [selectedCategory])
 
   useEffect(() => {
     setLightMemory((prev) => {
@@ -384,8 +403,8 @@ export function App() {
   }, [dashboardEntities, settings.categoryMap])
 
   const categories = useMemo(() => {
-    const list = settings.customCategories.length > 0 ? settings.customCategories : discoveredCategories
-    return [...list].sort((a, b) => a.localeCompare(b))
+    // Preserve customCategories order; fall back to alphabetical discovered list
+    return settings.customCategories.length > 0 ? settings.customCategories : discoveredCategories
   }, [settings.customCategories, discoveredCategories])
 
   const categoryOptions = useMemo(() => {
@@ -423,6 +442,14 @@ export function App() {
     () => sortedEntities.filter((entity) => getDomain(entity.entity_id) === 'automation'),
     [sortedEntities],
   )
+
+  const topLevelCategories = useMemo(
+    () => categories.filter((cat) => !settings.categoryParents[cat]),
+    [categories, settings.categoryParents],
+  )
+
+  const childCategoriesOf = (parent: string) =>
+    categories.filter((cat) => settings.categoryParents[cat] === parent)
 
   const entityChoices = (query: string) => {
     const q = query.trim().toLowerCase()
@@ -515,6 +542,96 @@ export function App() {
       ...prev,
       customCategories: prev.customCategories.filter((item) => item !== category),
     }))
+  }
+
+  const reorderCategory = (fromName: string, targetName: string) => {
+    if (!fromName || !targetName || fromName === targetName) return
+    setSettings((prev) => {
+      const cats = [...prev.customCategories]
+      const from = cats.indexOf(fromName)
+      const to = cats.indexOf(targetName)
+      if (from < 0 || to < 0) return prev
+      cats.splice(from, 1)
+      cats.splice(to, 0, fromName)
+      return { ...prev, customCategories: cats }
+    })
+  }
+
+  const setCategoryIcon = (category: string, icon: string) => {
+    setSettings((prev) => ({ ...prev, categoryIcons: { ...prev.categoryIcons, [category]: icon } }))
+  }
+
+  const setCategoryDisplayMode = (category: string, mode: 'name' | 'icon' | 'name_icon') => {
+    setSettings((prev) => ({ ...prev, categoryDisplayModes: { ...prev.categoryDisplayModes, [category]: mode } }))
+  }
+
+  const setCategoryParent = (category: string, parent: string) => {
+    setSettings((prev) => {
+      const next = { ...prev.categoryParents }
+      if (parent) {
+        next[category] = parent
+      } else {
+        delete next[category]
+      }
+      return { ...prev, categoryParents: next }
+    })
+  }
+
+  const applyCategoryPin = async (category: string) => {
+    const pin = (categoryPinSetting[category] ?? '').trim()
+    if (!pin) return
+    const hash = await sha256(pin)
+    setSettings((prev) => ({ ...prev, categoryPinHashes: { ...prev.categoryPinHashes, [category]: hash } }))
+    setCategoryPinSetting((prev) => ({ ...prev, [category]: '' }))
+  }
+
+  const clearCategoryPin = (category: string) => {
+    setSettings((prev) => {
+      const next = { ...prev.categoryPinHashes }
+      delete next[category]
+      return { ...prev, categoryPinHashes: next }
+    })
+  }
+
+  const onCategoryClick = (category: string) => {
+    const hash = settings.categoryPinHashes[category]
+    if (hash && !unlockedCategories.has(category)) {
+      pendingUnlockCallback.current = () => {
+        setSelectedCategory(category)
+        setSubCategory(null)
+      }
+      setPendingCategory(category)
+      return
+    }
+    setSelectedCategory(category)
+    setSubCategory(null)
+  }
+
+  const onSubCategoryClick = (sub: string) => {
+    const hash = settings.categoryPinHashes[sub]
+    if (hash && !unlockedCategories.has(sub)) {
+      pendingUnlockCallback.current = () => setSubCategory(sub)
+      setPendingCategory(sub)
+      return
+    }
+    setSubCategory(sub)
+  }
+
+  const unlockCategory = async () => {
+    if (!pendingCategory) return
+    const hash = settings.categoryPinHashes[pendingCategory]
+    const entered = categoryPinInput.trim()
+    if (!entered || !hash) return
+    const hashed = await sha256(entered)
+    if (hashed === hash) {
+      setUnlockedCategories((prev) => new Set([...prev, pendingCategory]))
+      pendingUnlockCallback.current?.()
+      pendingUnlockCallback.current = null
+      setPendingCategory(null)
+      setCategoryPinInput('')
+    } else {
+      setStatusText('Invalid PIN')
+    }
   }
 
   const addScene = () => {
@@ -837,29 +954,78 @@ export function App() {
       ) : null
     }
 
-    return <p className="entity-state">{displayState(entity)}</p>
+    return null // state shown in title chip
   }
 
   const renderTitle = (entity: HaEntity) => {
     const mode = settings.titleModes[entity.entity_id] ?? (settings.showIcons[entity.entity_id] ? 'name_icon' : 'name')
     const iconClass = iconClassFromEntity(entity)
     const name = String(settings.nameOverrides[entity.entity_id] ?? getFriendlyName(entity))
+    const on = isOnState(entity)
+    const chip = <span className={`state-chip${on ? ' state-chip--on' : ''}`}>{displayState(entity)}</span>
 
     if (mode === 'icon') {
-      return <i className={`${iconClass} card-icon`} title={name} />
-    }
-    if (mode === 'name_icon') {
       return (
-        <div className="card-title-wrap">
-          <i className={`${iconClass} card-icon`} />
-          <h3>{name}</h3>
+        <div className="card-title-row">
+          <i className={`${iconClass} card-icon`} title={name} />
+          {chip}
         </div>
       )
     }
-    return <h3>{name}</h3>
+    if (mode === 'name_icon') {
+      return (
+        <div className="card-title-row">
+          <div className="card-title-wrap">
+            <i className={`${iconClass} card-icon`} />
+            <h3>{name}</h3>
+          </div>
+          {chip}
+        </div>
+      )
+    }
+    return (
+      <div className="card-title-row">
+        <h3>{name}</h3>
+        {chip}
+      </div>
+    )
+  }
+
+  const renderCategoryButton = (category: string, onClick: () => void, extraClass = '') => {
+    const mode = settings.categoryDisplayModes[category] ?? 'name'
+    const rawIcon = settings.categoryIcons[category]
+    const isLocked = !!settings.categoryPinHashes[category] && !unlockedCategories.has(category)
+    const iconClass = rawIcon
+      ? `mdi ${rawIcon.startsWith('mdi:') ? `mdi-${rawIcon.slice(4)}` : rawIcon}`
+      : null
+
+    return (
+      <button key={category} className={`category-btn${extraClass ? ` ${extraClass}` : ''}`} onClick={onClick}>
+        {iconClass && (mode === 'icon' || mode === 'name_icon') ? (
+          <i className={`${iconClass} category-btn__icon`} />
+        ) : null}
+        {mode !== 'icon' ? <span className="category-btn__name">{category}</span> : null}
+        {isLocked ? <i className="mdi mdi-lock category-btn__lock" /> : null}
+      </button>
+    )
   }
 
   const adminRequested = selectedCategory === ADMIN_CATEGORY_ID
+
+  const renderEntityGrid = (entityList: HaEntity[]) => (
+    <div className="grid">
+      {entityList.map((entity) => (
+        <article
+          key={entity.entity_id}
+          className={`card${settings.cardWidths[entity.entity_id] === 'double' ? ' card--double' : ''}${isOnState(entity) ? ' card--active' : ''}${canCardToggle(entity) ? ' card--toggleable' : ''}`}
+          onClick={() => onCardToggle(entity)}
+        >
+          {renderTitle(entity)}
+          {renderEntityControls(entity)}
+        </article>
+      ))}
+    </div>
+  )
 
   return (
     <div className="app">
@@ -875,41 +1041,60 @@ export function App() {
 
       {!adminRequested ? (
         <main className="dashboard">
-          {selectedCategory === null ? (
+          {pendingCategory !== null ? (
+            <section className="panel">
+              <h3>
+                <i className="mdi mdi-lock" /> {pendingCategory}
+              </h3>
+              <p>Enter PIN to unlock this category.</p>
+              <div className="row-form row-form--stack">
+                <input
+                  type="password"
+                  value={categoryPinInput}
+                  onChange={(event) => setCategoryPinInput(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') void unlockCategory() }}
+                  placeholder="Category PIN"
+                />
+                <div className="inline-controls">
+                  <button onClick={() => void unlockCategory()}>Unlock</button>
+                  <button onClick={() => { setPendingCategory(null); setCategoryPinInput('') }}>Cancel</button>
+                </div>
+              </div>
+            </section>
+          ) : selectedCategory === null ? (
             <div className="category-grid">
-              {categories.map((category) => {
-                const count = entitiesByCategory.get(category)?.length ?? 0
-                return (
-                  <button key={category} className="category-btn" onClick={() => setSelectedCategory(category)}>
-                    <span className="category-btn__name">{category}</span>
-                    <span className="category-btn__count">{count}</span>
-                  </button>
-                )
-              })}
-              <button className="category-btn category-btn--admin" onClick={() => setSelectedCategory(ADMIN_CATEGORY_ID)}>
+              {topLevelCategories.map((category) =>
+                renderCategoryButton(category, () => onCategoryClick(category))
+              )}
+              <button
+                className="category-btn category-btn--admin"
+                onClick={() => setSelectedCategory(ADMIN_CATEGORY_ID)}
+              >
                 <span className="category-btn__name">Admin</span>
-                <span className="category-btn__count">Protected</span>
               </button>
             </div>
+          ) : subCategory !== null ? (
+            <>
+              <div className="cat-nav">
+                <button className="back-btn" onClick={() => setSubCategory(null)}>Back</button>
+                <h2 className="cat-heading">{selectedCategory} › {subCategory}</h2>
+              </div>
+              {renderEntityGrid(entitiesByCategory.get(subCategory) ?? [])}
+            </>
           ) : (
             <>
               <div className="cat-nav">
                 <button className="back-btn" onClick={() => setSelectedCategory(null)}>Back</button>
                 <h2 className="cat-heading">{selectedCategory}</h2>
               </div>
-              <div className="grid">
-                {(entitiesByCategory.get(selectedCategory) ?? []).map((entity) => (
-                  <article
-                    key={entity.entity_id}
-                    className={`card${settings.cardWidths[entity.entity_id] === 'double' ? ' card--double' : ''}${isOnState(entity) ? ' card--active' : ''}${canCardToggle(entity) ? ' card--toggleable' : ''}`}
-                    onClick={() => onCardToggle(entity)}
-                  >
-                    {renderTitle(entity)}
-                    <p className="state-pill">{displayState(entity)}</p>
-                    {renderEntityControls(entity)}
-                  </article>
-                ))}
-              </div>
+              {childCategoriesOf(selectedCategory).length > 0 ? (
+                <div className="category-grid" style={{ marginTop: 12 }}>
+                  {childCategoriesOf(selectedCategory).map((sub) =>
+                    renderCategoryButton(sub, () => onSubCategoryClick(sub))
+                  )}
+                </div>
+              ) : null}
+              {renderEntityGrid(entitiesByCategory.get(selectedCategory) ?? [])}
             </>
           )}
         </main>
@@ -924,6 +1109,7 @@ export function App() {
                   type="password"
                   value={adminPassword}
                   onChange={(event) => setAdminPassword(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') void unlockAdmin() }}
                   placeholder="Enter admin password"
                 />
                 <div className="inline-controls">
@@ -1039,14 +1225,67 @@ export function App() {
                 <section className="panel">
                   <h3>Custom categories</h3>
                   <div className="manage-toolbar">
-                    <input value={newCategory} onChange={(event) => setNewCategory(event.target.value)} placeholder="New category" />
-                    <button onClick={addCategory}>Add category</button>
+                    <input value={newCategory} onChange={(event) => setNewCategory(event.target.value)} placeholder="New category name" />
+                    <button onClick={addCategory}>Add</button>
                   </div>
-                  <div className="chip-wrap">
+                  <div className="entity-list" style={{ marginTop: 10 }}>
                     {settings.customCategories.map((category) => (
-                      <button key={category} className="chip" onClick={() => removeCategory(category)}>
-                        {category} x
-                      </button>
+                      <div
+                        key={category}
+                        className="entity-row"
+                        draggable
+                        onDragStart={() => setDragCategoryId(category)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => reorderCategory(dragCategoryId, category)}
+                      >
+                        <div className="inline-controls">
+                          <span style={{ cursor: 'grab', userSelect: 'none' }}>⠿</span>
+                          <strong style={{ flex: 1 }}>{category}</strong>
+                          <button onClick={() => removeCategory(category)}>✕ Remove</button>
+                        </div>
+                        <div className="inline-controls">
+                          <input
+                            value={settings.categoryIcons[category] ?? ''}
+                            onChange={(event) => setCategoryIcon(category, event.target.value)}
+                            placeholder="mdi:icon-name"
+                            style={{ flex: 1 }}
+                          />
+                          <select
+                            value={settings.categoryDisplayModes[category] ?? 'name'}
+                            onChange={(event) => setCategoryDisplayMode(category, event.target.value as 'name' | 'icon' | 'name_icon')}
+                          >
+                            <option value="name">Name</option>
+                            <option value="name_icon">Icon + Name</option>
+                            <option value="icon">Icon only</option>
+                          </select>
+                          <select
+                            value={settings.categoryParents[category] ?? ''}
+                            onChange={(event) => setCategoryParent(category, event.target.value)}
+                          >
+                            <option value="">No parent</option>
+                            {settings.customCategories
+                              .filter((c) => c !== category)
+                              .map((c) => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                          </select>
+                        </div>
+                        <div className="inline-controls">
+                          <input
+                            type="password"
+                            value={categoryPinSetting[category] ?? ''}
+                            onChange={(event) => setCategoryPinSetting((prev) => ({ ...prev, [category]: event.target.value }))}
+                            placeholder="Set PIN"
+                            style={{ flex: 1 }}
+                          />
+                          <button onClick={() => void applyCategoryPin(category)}>
+                            {settings.categoryPinHashes[category] ? 'Update PIN' : 'Set PIN'}
+                          </button>
+                          {settings.categoryPinHashes[category] ? (
+                            <button onClick={() => clearCategoryPin(category)}>Clear PIN</button>
+                          ) : null}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </section>

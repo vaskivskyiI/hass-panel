@@ -55,6 +55,16 @@ def _state_labels_map(value: Any) -> dict[str, dict[str, str]]:
     return out
 
 
+def _category_display_modes_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in value.items():
+        if v in ("name", "icon", "name_icon"):
+            out[str(k)] = str(v)
+    return out
+
+
 def _string_list_map(value: Any) -> dict[str, list[str]]:
     if not isinstance(value, dict):
         return {}
@@ -182,6 +192,9 @@ def _sanitize_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged["stateLabels"] = _state_labels_map(source.get("stateLabels"))
     merged["customCategories"] = _string_list(source.get("customCategories"))
     merged["categoryPinHashes"] = _string_map(source.get("categoryPinHashes"))
+    merged["categoryIcons"] = _string_map(source.get("categoryIcons"))
+    merged["categoryDisplayModes"] = _category_display_modes_map(source.get("categoryDisplayModes"))
+    merged["categoryParents"] = _string_map(source.get("categoryParents"))
     merged["categoryTopText"] = _string_map(source.get("categoryTopText"))
     merged["categoryBottomText"] = _string_map(source.get("categoryBottomText"))
     merged["categoryTopEntities"] = _string_list_map(source.get("categoryTopEntities"))

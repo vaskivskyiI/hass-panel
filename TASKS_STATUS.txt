@@ -47,3 +47,11 @@ Notes: Management moved to Admin category. Save/refresh controls remain inside A
 
 14. Larger card title typography
 Status: Done
+
+15. When admin was unlocked once it does not lock automatically. Lock it as soon as navigated alway
+16. password set in home assistant is not being updated in frontend
+17 make it posible to password protect categories
+18 make it possible to create nested categories
+19 add category reordering
+20 Category can display either name or large icon. Alow setting the icon. Don't show number of items.
+21 Show on/off to the right from the title as a chip
