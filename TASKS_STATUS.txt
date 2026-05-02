@@ -48,10 +48,30 @@ Notes: Management moved to Admin category. Save/refresh controls remain inside A
 14. Larger card title typography
 Status: Done
 
-15. When admin was unlocked once it does not lock automatically. Lock it as soon as navigated alway
+15. When admin was unlocked once it does not lock automatically. Lock it as soon as navigated away
+Status: Done
+Notes: useEffect watches selectedCategory; sets adminUnlocked=false whenever Admin is not the active category.
+
 16. password set in home assistant is not being updated in frontend
-17 make it posible to password protect categories
-18 make it possible to create nested categories
-19 add category reordering
-20 Category can display either name or large icon. Alow setting the icon. Don't show number of items.
-21 Show on/off to the right from the title as a chip
+Status: Done
+Notes: Backend GET /api/settings now fetches passwordHash from HA's /api/studio_panel/settings and overlays it, making HA the source of truth.
+
+17. make it possible to password protect categories
+Status: Done
+Notes: Any category with a PIN hash in categoryPinHashes triggers an unlock prompt before navigation. PIN set/cleared from Admin → Categories tab.
+
+18. make it possible to create nested categories
+Status: Done
+Notes: categoryParents maps child→parent. Top-level categories are shown in the grid. Entering a parent shows child category buttons + its own entities. Sub-category navigation has a breadcrumb back button.
+
+19. add category reordering
+Status: Done
+Notes: customCategories order is now preserved (no more alpha sort). Drag-and-drop reordering added to Admin → Categories tab.
+
+20. Category can display either name or large icon. Allow setting the icon. Don't show number of items.
+Status: Done
+Notes: Per-category icon (mdi:icon-name) and display mode (name / icon+name / icon only) configurable in Admin → Categories. Item count removed from category buttons.
+
+21. Show on/off to the right from the title as a chip
+Status: Done
+Notes: renderTitle now wraps content in .card-title-row (space-between flex). A .state-chip shows on/off (accent-colored when on) at the right of every entity card title. Removed standalone state-pill paragraph.
