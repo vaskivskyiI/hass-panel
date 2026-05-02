@@ -1,158 +1,79 @@
-# NM Studio Panel
+# Studio Panel Refactor (vNext)
 
-Touch-first Home Assistant control panel for wall-mounted tablets and phones. The UI is optimized for large hit targets, fast one-tap actions, and an installable PWA workflow.
+This repository was rebuilt from scratch in three layers:
 
-## Configure Home Assistant
+1. Home Assistant component (`custom_components/studio_panel`)
+2. Dashboard backend (`backend/`)
+3. Modern frontend (`frontend/`)
 
-You can provide the API settings in two ways:
+## Architecture
 
-1. **In the UI**
-   - Enter the Home Assistant URL and Long-Lived Access Token in the Connection section.
-   - These values are written to the container-mounted runtime config and are not stored in the browser.
+- **Home Assistant component**
+  - Stores all dashboard settings in HA storage
+  - Exposes API endpoints:
+    - `GET/PUT /api/studio_panel/settings`
+    - `GET /api/studio_panel/entities`
 
-2. **Via environment variables**
-   - Create a file named `.env.local` in the project root with:
+- **Backend (FastAPI)**
+  - Persists runtime config and settings on disk (`/data`)
+  - Proxies entity list and service calls to Home Assistant
+  - Exposes API endpoints:
+    - `GET /api/health`
+    - `GET/PUT /api/runtime-config`
+    - `GET/PUT /api/settings`
+    - `GET /api/entities`
+    - `POST /api/service/{domain}/{service}`
 
-```
-VITE_HA_URL=https://homeassistant.local:8123
-VITE_HA_TOKEN=YOUR_LONG_LIVED_ACCESS_TOKEN
-VITE_HA_PROXY=true
-```
-
-`VITE_HA_PROXY=true` enables the Vite development proxy to avoid CORS errors. It is only for local development.
-
-In production, the panel reads connection settings from the container-mounted runtime config file, not from browser storage.
-
-## Server-side settings storage (custom integration)
-
-This project includes a Home Assistant custom integration in [custom_components/studio_panel](custom_components/studio_panel). It exposes an authenticated endpoint:
-
-```
-GET /api/studio_panel/settings
-PUT /api/studio_panel/settings
-```
-
-It also registers a Home Assistant admin service for password recovery and rotation:
-
-```
-studio_panel.set_password
-studio_panel.update_settings
-studio_panel.reset_settings
-```
-
-### Install the integration
-
-1. Install this repository via HACS (custom repository).
-2. In Home Assistant, go to Settings → Devices & Services → Add Integration → Studio Panel.
-3. Restart Home Assistant if prompted.
-
-### Reset or change the settings password from Home Assistant
-
-Preferred UI path:
-
-1. Open Settings → Devices & Services.
-2. Open the Studio Panel integration.
-3. Select Configure.
-4. Choose either `Set new password` or `Clear password`.
-
-Alternative admin service path:
-
-Use Developer Tools → Actions, select `studio_panel.set_password`, then either:
-
-- Set `password` to a new value to replace the current settings password.
-- Set `clear_password` to `true` to remove the saved password entirely. The next time you open Settings in the panel, it will prompt you to create a new one.
-
-Example service data to set a new password:
-
-```yaml
-password: new-tablet-password
-```
-
-Example service data to clear the password:
-
-```yaml
-clear_password: true
-```
-
-To update other saved panel settings from Home Assistant, use `studio_panel.update_settings` with a JSON object. Example:
-
-```yaml
-settings_json: '{"customCategories":["Lighting","Climate"],"headerEntities":{"temperatureEntityId":"sensor.room_temperature","humidityEntityId":"sensor.room_humidity","doorContactEntityId":"binary_sensor.front_door","doorActionEntityId":"button.open_door"}}'
-merge: true
-```
-
-To clear all saved Home Assistant-side panel settings, run `studio_panel.reset_settings`.
-
-## Persistence model
-
-- Home Assistant stores panel settings, including password hash, visible entities, categories, ordering, header configuration, inline text, scene buttons, and per-entity display options.
-- The frontend container stores only the Home Assistant connection URL and token in `$HOME/podman_data/studio_panel/config/runtime-config.json`.
-- The browser does not persist Studio Panel configuration between restarts.
-
-When you update the Connection section in the panel UI and press `Save & connect`, the container rewrites its mounted `runtime-config.json` and reloads the local HA proxy config.
+- **Frontend (React + Vite)**
+  - Dashboard mode and Manage mode
+  - Manage mode supports visual entity selection and save without manual JSON editing
 
 ## Run with Podman
 
-Use the included launcher script, patterned after the scripts in `/home/smart/podman`:
-
-```
-./studio-panel.sh
-```
-
-This script:
-
-- Builds the production image in Podman.
-- Creates a persistent config directory at `$HOME/podman_data/studio_panel/config`.
-- Copies the current `.env.local` into persistent storage on first run.
-- Seeds `$HOME/podman_data/studio_panel/config/runtime-config.json` from the currently available Home Assistant URL and token.
-- Starts the panel at `http://localhost:8088`.
-
-To rebuild from fresh upstream container images:
-
-```
+```bash
 ./studio-panel.sh update
 ```
 
-After the first run, update the persistent runtime config instead of editing the container image:
+App will be available at `http://localhost:8088`.
 
-```
-$HOME/podman_data/studio_panel/config/runtime-config.json
-```
+## Environment
 
-Expected format:
+Configure `.env.local` in project root:
 
-```json
-{
-   "haUrl": "https://homeassistant.local:8123",
-   "haToken": "YOUR_LONG_LIVED_ACCESS_TOKEN"
-}
-```
+- `HA_URL`: Home Assistant base URL
+- `HA_TOKEN`: Home Assistant long-lived access token
+- `PANEL_ADMIN_TOKEN` (optional): required in frontend Manage view for protected save operations
 
-## PWA installation
+`studio-panel.sh` passes these values into the container and backend seeds runtime config from env on first start.
 
-The frontend now ships as an installable PWA.
+## Advanced GUI
 
-- Open the panel in Chrome, Edge, or another compatible browser.
-- Use the in-app `Install app` button or the browser install prompt.
-- On mounted devices, run the app in standalone mode for a clean, full-screen control surface.
+Manage mode includes full GUI management for:
 
-## Development build in Podman
+- entity visibility and drag/drop order
+- category mapping and custom categories
+- scene button editor
+- action tile editor
+- profile editor
+- header entity selectors
+- runtime connection settings
 
-Install dependencies and build without host installs:
+No manual JSON editing is required for dashboard configuration.
 
-```
-podman run --rm -it -v $PWD:/work -w /work node:20-bullseye npm install
-podman run --rm -it -v $PWD:/work -w /work node:20-bullseye npm run build
-```
+## Home Assistant component updates from GitHub
 
-## Troubleshooting “Failed to fetch”
+The custom component is in `custom_components/studio_panel/`.
 
-- Ensure the Home Assistant URL is reachable from the tablet and uses the correct scheme (http/https).
-- For local development, set `VITE_HA_PROXY=true` in `.env.local` to avoid CORS.
-- For the Podman production container, enable CORS in Home Assistant or serve Home Assistant and the panel from compatible origins.
+To update in HA:
 
-## Production build
+1. Pull latest from GitHub into your deployment source.
+2. Copy `custom_components/studio_panel/` into HA config `custom_components/`.
+3. Restart Home Assistant.
 
-```
-podman run --rm -it -v $PWD:/work -w /work node:20-bullseye npm run build
-```
+## HTTPS and external nginx
+
+Use your external nginx to route `https://studio.krigo.cc/` to `http://127.0.0.1:8088`.
+
+## Home Assistant custom component
+
+Copy `custom_components/studio_panel/` into your HA config `custom_components` folder and restart Home Assistant.

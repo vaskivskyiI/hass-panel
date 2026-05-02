@@ -1,11 +1,5 @@
 .git
-.github
-.vscode
-node_modules
-dist
-dist-ssr
+_rebuild_backup_*
 __pycache__
-**/__pycache__
-*.py[cod]
-*.log
-.env.local
+frontend/node_modules
+frontend/dist

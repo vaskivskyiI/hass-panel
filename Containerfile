@@ -1,24 +1,18 @@
-FROM docker.io/node:20-bullseye AS build
-
-WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm ci
-
-COPY . .
+FROM docker.io/node:20-bullseye AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+COPY frontend/ ./
 RUN npm run build
 
-FROM docker.io/nginx:1.27-alpine
+FROM docker.io/python:3.12-slim
+WORKDIR /app
 
-RUN apk add --no-cache python3
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
 
-COPY podman/nginx.conf /etc/nginx/conf.d/default.conf
-COPY podman/runtime_config_server.py /usr/local/bin/runtime_config_server.py
-COPY podman/start.sh /usr/local/bin/start.sh
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY backend/ ./backend/
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
-RUN printf '{}\n' > /usr/share/nginx/html/runtime-config.json
-
-EXPOSE 8080
-
-CMD ["sh", "/usr/local/bin/start.sh"]
+EXPOSE 8088
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8088"]

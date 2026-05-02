@@ -5,7 +5,6 @@ from typing import Any
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant, callback
 
-from .const import DOMAIN
 from .storage import SettingsStore
 
 
@@ -18,13 +17,13 @@ class StudioPanelSettingsView(HomeAssistantView):
         self._store = store
 
     async def get(self, request):
-        data = await self._store.async_load()
-        return self.json(data)
+        settings = await self._store.async_load()
+        return self.json(settings)
 
     async def put(self, request):
         payload: dict[str, Any] = await request.json()
-        await self._store.async_save(payload)
-        return self.json({"status": "ok"})
+        saved = await self._store.async_save(payload)
+        return self.json({"status": "ok", "settings": saved})
 
 
 class StudioPanelEntitiesView(HomeAssistantView):

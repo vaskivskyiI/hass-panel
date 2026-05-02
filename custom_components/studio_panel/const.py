@@ -1,27 +1,38 @@
 DOMAIN = "studio_panel"
-STORAGE_KEY = "studio_panel.settings"
 STORAGE_VERSION = 1
-ALLOWED_SETTINGS_KEYS = (
-	"enabledEntities",
-	"nameOverrides",
-	"categoryMap",
-	"cardWidths",
-	"entityOrder",
-	"customCategories",
-	"categoryPinHashes",
-	"categoryTopText",
-	"categoryBottomText",
-	"categoryTopEntities",
-	"categoryBottomEntities",
-	"sceneButtons",
-	"showIcons",
-	"passwordHash",
-	"headerEntities",
-	"globalSettings",
-	"profiles",
-	"deviceProfiles",
-	"actionTiles",
-)
-SERVICE_SET_PASSWORD = "set_password"
-SERVICE_UPDATE_SETTINGS = "update_settings"
-SERVICE_RESET_SETTINGS = "reset_settings"
+STORAGE_KEY = f"{DOMAIN}.settings"
+
+DEFAULT_SETTINGS = {
+    "enabledEntities": [],
+    "entityOrder": [],
+    "nameOverrides": {},
+    "categoryMap": {},
+    "cardWidths": {},
+    "showIcons": {},
+    "customCategories": [],
+    "categoryPinHashes": {},
+    "categoryTopText": {},
+    "categoryBottomText": {},
+    "categoryTopEntities": {},
+    "categoryBottomEntities": {},
+    "sceneButtons": [],
+    "passwordHash": "",
+    "headerEntities": {
+        "temperatureEntityId": "",
+        "humidityEntityId": "",
+        "doorContactEntityId": "",
+        "doorActionEntityId": "",
+    },
+    "globalSettings": {
+        "title": "Studio Panel",
+        "subtitle": "Control center",
+        "accentColor": "#3fa9f5",
+        "hiddenEntities": [],
+        "featuredEntities": [],
+    },
+    "profiles": {},
+    "deviceProfiles": {},
+    "actionTiles": [],
+}
+
+ALLOWED_SETTINGS_KEYS = set(DEFAULT_SETTINGS.keys())
